@@ -44,8 +44,8 @@ class Test(AbstractTest):
         self.assertEqual(ReturnValue.OK, Solution.customer_placed_order(1, 1), "Try 1")
         self.assertEqual(c1, Solution.get_customer_that_placed_order(1), "Try 11")
         self.assertEqual(BadCustomer(), Solution.get_customer_that_placed_order(2), "Try 12")
-        self.assertEqual(ReturnValue.OK, Solution.order_contains_dish(1,1,1), "Try 13")
-        self.assertEqual([OrderDish(1, 1, 20)], Solution.get_all_order_items(1), "Try 13")
+        self.assertEqual(ReturnValue.OK, Solution.order_contains_dish(1,1,3), "Try 13")
+        self.assertEqual([OrderDish(1, 3, 20)], Solution.get_all_order_items(1), "Try 13")
 
 
 # *** DO NOT RUN EACH TEST MANUALLY ***
