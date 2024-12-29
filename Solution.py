@@ -18,6 +18,7 @@ DELETE FROM Orders;
 DELETE FROM Dish;
 DELETE FROM Placed;
 DELETE FROM OrderedDishes;
+DELETE FROM DishRatings;
 '''
 DROP_TABLES_QUERY = '''
 DROP TABLE IF EXISTS Customer CASCADE;
@@ -25,6 +26,7 @@ DROP TABLE IF EXISTS Orders CASCADE;
 DROP TABLE IF EXISTS Dish CASCADE;
 DROP TABLE IF EXISTS Placed CASCADE;
 DROP TABLE IF EXISTS OrderedDishes CASCADE;
+DROP TABLE IF EXISTS DishRatings CASCADE;
 '''
 
 
@@ -42,7 +44,7 @@ CREATE_ORDER_TABLE_QUERY = '''
 CREATE TABLE Orders
 (
     order_id INTEGER PRIMARY KEY CHECK (order_id > 0),
-    date DATE NOT NULL,
+    date TIMESTAMP NOT NULL,
     delivery_fee DECIMAL NOT NULL CHECK (delivery_fee >= 0),
     delivery_address TEXT NOT NULL CHECK (LENGTH(delivery_address) >= 5)
 );
@@ -69,12 +71,15 @@ CREATE TABLE Placed
 );
 '''
 
+
+
+# This function will be called in 'except' blocks to handle exceptions that will be raised
 CREATE_ORDERED_DISHES_TABLE_QUERY = '''
 CREATE TABLE OrderedDishes
 (
     order_id INTEGER NOT NULL,
     dish_id INTEGER NOT NULL,
-    dish_amount INTEGER NOT NULL CHECK (dish_amount > 0),
+    dish_amount INTEGER NOT NULL CHECK (dish_amount >= 0),
     dish_price DECIMAL NOT NULL CHECK (dish_price > 0),
     CONSTRAINT fk_order_id FOREIGN KEY (order_id) REFERENCES Orders(order_id) ON DELETE CASCADE,
     CONSTRAINT fk_dish_id FOREIGN KEY (dish_id) REFERENCES Dish(dish_id) ON DELETE CASCADE,
@@ -82,8 +87,17 @@ CREATE TABLE OrderedDishes
 );
 '''
 
-
-# This function will be called in 'except' blocks to handle exceptions that will be raised
+CREATE_DISH_RATINGS_TABLE_QUERY = '''
+CREATE TABLE DishRatings
+(
+    cust_id INTEGER NOT NULL,
+    dish_id INTEGER NOT NULL,
+    rating INTEGER NOT NULL CHECK (1 <= rating AND rating <= 5),
+    CONSTRAINT fk_cust_id FOREIGN KEY (cust_id) REFERENCES Customer(cust_id) ON DELETE CASCADE,
+    CONSTRAINT fk_dish_id FOREIGN KEY (dish_id) REFERENCES Dish(dish_id) ON DELETE CASCADE,
+    CONSTRAINT unq_dish_rating UNIQUE (cust_id, dish_id)
+);
+'''
 # in case of an illegal or a failed database communication
 def handle_database_exceptions(query: sql.SQL, e: Exception, print_flag = False) -> ReturnValue:
     result = ReturnValue.ERROR
@@ -108,18 +122,19 @@ def handle_database_exceptions(query: sql.SQL, e: Exception, print_flag = False)
     return result
 
 
-def handle_query_insertion(query: sql.SQL) -> ReturnValue:
+def handle_query_insertion(query: sql.SQL) -> Tuple[ReturnValue, int]:
     query_result = ReturnValue.ERROR
+    rows_amount = -1
     conn = Connector.DBConnector()
     try:
-        conn.execute(query)
+        rows_amount, _ = conn.execute(query)
         conn.commit()
         query_result = ReturnValue.OK
     except Exception as e:
         query_result = handle_database_exceptions(query, e, DEBUG_FLAG)
     finally:
         conn.close()
-    return query_result
+    return query_result, rows_amount
 
 
 def handle_query_selection(query: sql.SQL) -> Tuple[ReturnValue, int, Connector.ResultSet]:
@@ -142,7 +157,7 @@ def handle_query_deletion(query: sql.SQL) -> ReturnValue:
     query_result = ReturnValue.ERROR
     conn = Connector.DBConnector()
     try:
-        rows_amount, data_deleted = conn.execute()
+        rows_amount, data_deleted = conn.execute(query)
         conn.commit()
         if 0 == rows_amount:
             query_result = ReturnValue.NOT_EXISTS
@@ -170,7 +185,8 @@ def create_tables() -> None:
             CREATE_ORDER_TABLE_QUERY + \
             CREATE_DISH_TABLE_QUERY + \
             CREATE_PLACED_TABLE_QUERY + \
-            CREATE_ORDERED_DISHES_TABLE_QUERY
+            CREATE_ORDERED_DISHES_TABLE_QUERY + \
+            CREATE_DISH_RATINGS_TABLE_QUERY
     try:
         conn = Connector.DBConnector()
         query = sql.SQL(query)
@@ -226,7 +242,8 @@ def add_customer(customer: Customer) -> ReturnValue:
         phone = sql.Literal(customer.get_phone())
     )
 
-    ret_val = handle_query_insertion(query)
+    ret_val, _ = handle_query_insertion(query)
+
     return ret_val
 
 
@@ -273,7 +290,8 @@ def add_order(order: Order) -> ReturnValue:
         delivery_address = sql.Literal(order.get_delivery_address())
     )
 
-    ret_val = handle_query_insertion(query)
+    ret_val, _ = handle_query_insertion(query)
+
     return ret_val
 
 
@@ -281,7 +299,7 @@ def get_order(order_id: int) -> Order:
     GET_ORDER_QUERY_FORMAT = '''
         SELECT * FROM Orders WHERE order_id={order_id}
     '''
-    result = BadCustomer()
+    result = BadOrder()
 
     query = sql.SQL(GET_ORDER_QUERY_FORMAT).format(
         order_id = sql.Literal(order_id)
@@ -320,7 +338,8 @@ def add_dish(dish: Dish) -> ReturnValue:
         is_active = sql.Literal(dish.get_is_active())
     )
 
-    ret_val = handle_query_insertion(query)
+    ret_val, _ = handle_query_insertion(query)
+
     return ret_val
 
 
@@ -344,14 +363,17 @@ def get_dish(dish_id: int) -> Dish:
 def update_dish_price(dish_id: int, price: float) -> ReturnValue:
     result = ReturnValue.ERROR
     UPDATE_DISH_PRICE_QUERY_FORMAT = '''
-        UPDATE Dish SET price = {price} WHERE dish_id={dish_id}
+        UPDATE Dish SET price = {price} WHERE (dish_id={dish_id} AND is_active=TRUE)
     '''
 
     query = sql.SQL(UPDATE_DISH_PRICE_QUERY_FORMAT).format(
         dish_id = sql.Literal(dish_id),
         price = sql.Literal(price)
     )
-    result = handle_query_insertion(query)
+    result, rows_updated = handle_query_insertion(query)
+    if ReturnValue.OK == result and 0 == rows_updated:
+        # (Evgeny) - As I understand this is the case when we are trying "Change the price of an un-active dish"
+        result = ReturnValue.NOT_EXISTS
 
     return result
 
@@ -366,7 +388,10 @@ def update_dish_active_status(dish_id: int, is_active: bool) -> ReturnValue:
         dish_id = sql.Literal(dish_id),
         is_active = sql.Literal(is_active)
     )
-    result = handle_query_insertion(query)
+    result, rows_updated = handle_query_insertion(query)
+    if ReturnValue.OK == result and 0 == rows_updated:
+        # (Evgeny) - As I understand this is the case when we are trying "Change the status of a 'non-existing in the system' dish"
+        result = ReturnValue.NOT_EXISTS
 
     return result
 
@@ -382,7 +407,7 @@ def customer_placed_order(customer_id: int, order_id: int) -> ReturnValue:
         cust_id=sql.Literal(customer_id),
         order_id=sql.Literal(order_id)
     )
-    ret_val = handle_query_insertion(query)
+    ret_val, _ = handle_query_insertion(query)
 
     return ret_val
 
@@ -405,21 +430,24 @@ def get_customer_that_placed_order(order_id: int) -> Customer:
 
 
 def order_contains_dish(order_id: int, dish_id: int, amount: int) -> ReturnValue:
-    ORDER_CONTAIN_DISH_QUERY = '''
+    ORDER_CONTAIN_DISH_QUERY_FORMAT = '''
         INSERT INTO OrderedDishes(order_id, dish_id, dish_amount, dish_price)
         VALUES(
             {order_id}, 
             {dish_id}, 
             {amount}, 
-            (SELECT price FROM Dish WHERE dish_id = {dish_id})
+            (SELECT price FROM Dish WHERE (dish_id = {dish_id} AND is_active = TRUE))
         )
     '''
-    query = sql.SQL(ORDER_CONTAIN_DISH_QUERY).format(
+    query = sql.SQL(ORDER_CONTAIN_DISH_QUERY_FORMAT).format(
         order_id = sql.Literal(order_id),
         dish_id = sql.Literal(dish_id),
         amount = sql.Literal(amount)
     )
-    ret_val = handle_query_insertion(query)
+    ret_val, rows_inserted = handle_query_insertion(query)
+    if ReturnValue.BAD_PARAMS == ret_val and order_id > 0 and dish_id > 0 and amount >= 0:
+        # (Evgeny) - As I understand this is the case when we are trying "Adding a dish to an order while the dish is not active"
+        ret_val = ReturnValue.NOT_EXISTS
 
     return ret_val
 
@@ -455,18 +483,52 @@ def get_all_order_items(order_id: int) -> List[OrderDish]:
 
 
 def customer_rated_dish(cust_id: int, dish_id: int, rating: int) -> ReturnValue:
-    # TODO: implement
-    pass
+    CUSTOMER_DISH_RATE_QUERY_FORMAT = '''
+        INSERT INTO DishRatings(cust_id, dish_id, rating)
+        VALUES(
+            {cust_id}, 
+            {dish_id}, 
+            {rating} 
+        )
+    '''
+    query = sql.SQL(CUSTOMER_DISH_RATE_QUERY_FORMAT).format(
+        cust_id=sql.Literal(cust_id),
+        dish_id=sql.Literal(dish_id),
+        rating=sql.Literal(rating)
+    )
+    ret_val, _ = handle_query_insertion(query)
+
+    return ret_val
 
 
 def customer_deleted_rating_on_dish(cust_id: int, dish_id: int) -> ReturnValue:
-    # TODO: implement
-    pass
+    DELETE_DISH_RATING_QUERY_FORMAT = '''
+        DELETE FROM DishRatings WHERE (cust_id={cust_id} AND dish_id={dish_id})
+    '''
+
+    query = sql.SQL(DELETE_DISH_RATING_QUERY_FORMAT).format(
+        cust_id=sql.Literal(cust_id),
+        dish_id=sql.Literal(dish_id)
+    )
+    ret_val = handle_query_deletion(query)
+
+    return ret_val
 
 
 def get_all_customer_ratings(cust_id: int) -> List[Tuple[int, int]]:
-    # TODO: implement
-    pass
+    GET_ALL_CUSTOMER_RATINGS_QUERY_FORMAT = '''
+        SELECT * FROM DishRatings WHERE cust_id = {cust_id} ORDER BY dish_id ASC
+    '''
+    query = sql.SQL(GET_ALL_CUSTOMER_RATINGS_QUERY_FORMAT).format(
+        cust_id=sql.Literal(cust_id)
+    )
+
+    retval = []
+    result, rows_amount, data = handle_query_selection(query)
+    for i in range(rows_amount):
+        retval.append((data[i]['dish_id'], data[i]['rating']))
+
+    return retval
 
 
 # ---------------------------------- BASIC API: ----------------------------------
