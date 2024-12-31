@@ -71,9 +71,6 @@ CREATE TABLE Placed
 );
 '''
 
-
-
-# This function will be called in 'except' blocks to handle exceptions that will be raised
 CREATE_ORDERED_DISHES_TABLE_QUERY = '''
 CREATE TABLE OrderedDishes
 (
@@ -98,6 +95,47 @@ CREATE TABLE DishRatings
     CONSTRAINT unq_dish_rating UNIQUE (cust_id, dish_id)
 );
 '''
+
+# ============================== VIEW QUERIES ==============================s
+# (Cust_id | [Order_id) | Date | Delivery_Fee | Delivery_Addr | Total_Order_Price}
+FULL_ORDER_DETAILS_VIEW = '''
+CREATE VIEW FullOrderDetailsView AS
+    SELECT 
+        p.cust_id AS cust_id,
+        o.order_id AS order_id,
+        o.date AS order_date,
+        o.delivery_fee AS delivery_fee,
+        o.delivery_address AS delivery_address,
+
+        SUM(od.dish_amount * od.dish_price) + delivery_fee AS total_order_price
+    FROM
+        OrderedDishes od
+    LEFT JOIN Orders o ON o.order_id = od.order_id
+    LEFT JOIN Placed p ON o.order_id = p.order_id
+    GROUP BY
+        o.order_id, p.cust_id
+'''
+'''
+CREATE VIEW FullOrderDetailsView AS
+SELECT 
+    o.order_id,
+    o.date AS order_date,
+    o.delivery_fee,
+    o.delivery_address,
+    p.cust_id,
+    SUM(od.dish_price * od.dish_amount) + o.delivery_fee AS total_order_price
+FROM 
+    Orders o
+LEFT JOIN 
+    Placed p ON o.order_id = p.order_id
+LEFT JOIN 
+    OrderedDishes od ON o.order_id = od.order_id
+GROUP BY 
+    o.order_id, o.date, o.delivery_fee, o.delivery_address, p.cust_id;
+'''
+# ============================== VIEW QUERIES ==============================s
+
+
 # in case of an illegal or a failed database communication
 def handle_database_exceptions(query: sql.SQL, e: Exception, print_flag = False) -> ReturnValue:
     result = ReturnValue.ERROR
@@ -181,12 +219,16 @@ def handle_query_deletion(query: sql.SQL) -> ReturnValue:
 
 def create_tables() -> None:
     conn = None
+    # Tables Creation
     query = CREATE_CUSTOMER_TABLE_QUERY + \
             CREATE_ORDER_TABLE_QUERY + \
             CREATE_DISH_TABLE_QUERY + \
             CREATE_PLACED_TABLE_QUERY + \
             CREATE_ORDERED_DISHES_TABLE_QUERY + \
             CREATE_DISH_RATINGS_TABLE_QUERY
+    # Views Creation
+    query += FULL_ORDER_DETAILS_VIEW
+
     try:
         conn = Connector.DBConnector()
         query = sql.SQL(query)
@@ -474,10 +516,8 @@ def get_all_order_items(order_id: int) -> List[OrderDish]:
         order_id=sql.Literal(order_id)
     )
 
-    retval = []
     result, rows_amount, data = handle_query_selection(query)
-    for i in range(rows_amount):
-        retval.append(OrderDish(data[i]['dish_id'], data[i]['dish_amount'], data[i]['dish_price']))
+    retval = [OrderDish(row['dish_id'], row['dish_amount'], row['dish_price']) for row in data]
 
     return retval
 
@@ -523,10 +563,8 @@ def get_all_customer_ratings(cust_id: int) -> List[Tuple[int, int]]:
         cust_id=sql.Literal(cust_id)
     )
 
-    retval = []
     result, rows_amount, data = handle_query_selection(query)
-    for i in range(rows_amount):
-        retval.append((data[i]['dish_id'], data[i]['rating']))
+    retval = [(row['dish_id'], row['rating']) for row in data]
 
     return retval
 
@@ -537,13 +575,33 @@ def get_all_customer_ratings(cust_id: int) -> List[Tuple[int, int]]:
 
 
 def get_order_total_price(order_id: int) -> float:
-    # TODO: implement
-    pass
+    GET_ORDER_TOTAL_PRICE_QUERY_FORMAT = '''
+        SELECT * FROM FullOrderDetailsView 
+        WHERE order_id = {order_id}; 
+    '''
+    query = sql.SQL(GET_ORDER_TOTAL_PRICE_QUERY_FORMAT).format(
+        order_id = sql.Literal(order_id)
+    )
+
+    result, rows_amount, data = handle_query_selection(query)
+
+    return float(data[0]['total_order_price'])
 
 
 def get_customers_spent_max_avg_amount_money() -> List[int]:
-    # TODO: implement
-    pass
+    GET_CUSTOMER_MAX_AVG_QUERY = '''
+        WITH tmp_avg_price AS (
+            SELECT cust_id, AVG(total_order_price) AS avg_price FROM FullOrderDetailsView
+            GROUP BY cust_id
+        )
+        SELECT cust_id FROM tmp_avg_price
+        WHERE avg_price = (SELECT MAX(avg_price) FROM tmp_avg_price)
+        ORDER BY cust_id ASC; 
+    '''
+    query = sql.SQL(GET_CUSTOMER_MAX_AVG_QUERY)
+    result, rows_amount, data = handle_query_selection(query)
+
+    return [row['cust_id'] for row in data]
 
 
 def get_most_purchased_dish_among_anonymous_order() -> Dish:
