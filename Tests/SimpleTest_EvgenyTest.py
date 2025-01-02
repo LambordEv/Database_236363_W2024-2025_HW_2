@@ -47,6 +47,22 @@ class Test(AbstractTest):
         self.assertEqual(ReturnValue.OK, Solution.order_contains_dish(1,1,3), "Try 13")
         self.assertEqual([OrderDish(1, 3, 20)], Solution.get_all_order_items(1), "Try 13")
 
+    def test_order_total_price(self):
+        dishes = [Dish(i+1, f'Dish #{i + 1}', 10*(i+1), True) for i in range(10)]
+        for d in dishes:
+            self.assertEqual(ReturnValue.OK, Solution.add_dish(d), f'Test - Dish Insert Dish #{d.get_dish_id()}')
+
+        orders = [Order(i+1, datetime(2025, 1, (i+1)%30, 12, 12, 12), 5*(i+1), f'Yossi Street {10*i}') for i in range(10)]
+        for o in orders:
+            self.assertEqual(ReturnValue.OK, Solution.add_order(o), f'Test - Order #{o.get_order_id()}')
+
+        self.assertEqual(ReturnValue.OK, Solution.order_contains_dish(1, 1, 3), 'Test - Insert 3*(Dish #1) to order #1') # Order #1 total price = 5 + 30
+        order_total_price_expected = [35]
+        self.assertEqual(order_total_price_expected[0], Solution.get_order_total_price(orders[0].get_order_id()), f'Test - Order #{orders[0].get_order_id()} total price')
+
+
+
+
 
 # *** DO NOT RUN EACH TEST MANUALLY ***
 if __name__ == '__main__':

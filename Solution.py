@@ -99,41 +99,53 @@ CREATE TABLE DishRatings
 # ============================== VIEW QUERIES ==============================s
 # (Cust_id | [Order_id) | Date | Delivery_Fee | Delivery_Addr | Total_Order_Price}
 FULL_ORDER_DETAILS_VIEW = '''
-CREATE VIEW FullOrderDetailsView AS
-    SELECT 
-        p.cust_id AS cust_id,
-        o.order_id AS order_id,
-        o.date AS order_date,
-        o.delivery_fee AS delivery_fee,
-        o.delivery_address AS delivery_address,
+CREATE VIEW OrderTotalPriceView AS
+(
+    SELECT o.order_id AS order_id, (COALESCE(SUM(od.dish_price * od.dish_amount), 0) + o.delivery_fee) AS total_order_price 
+    FROM Orders o
+    LEFT JOIN OrderedDishes od ON o.order_id = od.order_id
+    GROUP BY od.order_id, o.order_id
+);
+'''
 
-        SUM(od.dish_amount * od.dish_price) + delivery_fee AS total_order_price
-    FROM
-        OrderedDishes od
-    LEFT JOIN Orders o ON o.order_id = od.order_id
-    LEFT JOIN Placed p ON o.order_id = p.order_id
-    GROUP BY
-        o.order_id, p.cust_id
+
+DISH_POPULARITY_AMONG_UNPLACED_ORDERS_VIEW = '''
+CREATE VIEW PopularDishesInAnonymousOrders AS 
+(
+    SELECT d.dish_id AS dish_id, d.name AS name, d.price AS price, d.is_active AS is_active, SUM(od.dish_amount) AS total_dish_amount
+        FROM OrderedDishes od
+        JOIN Dish d ON od.dish_id = d.dish_id
+        LEFT JOIN Placed p ON od.order_id = p.order_id
+        WHERE p.cust_id IS NULL
+        GROUP BY d.dish_id
+        ORDER BY total_dish_amount DESC, d.dish_id ASC
+        LIMIT 1
+);
 '''
+
+DISH_POPULARITY_VIEW = '''
+CREATE VIEW DishAvgPopularityView AS 
+(
+    SELECT d.dish_id AS dish_id, AVG(COALESCE(dr.rating, 3)) AS avg_rating
+    FROM Dish d 
+    LEFT JOIN DishRatings dr ON d.dish_id = dr.dish_id
+    GROUP BY d.dish_id 
+    ORDER BY d.dish_id ASC
+);
 '''
-CREATE VIEW FullOrderDetailsView AS
-SELECT 
-    o.order_id,
-    o.date AS order_date,
-    o.delivery_fee,
-    o.delivery_address,
-    p.cust_id,
-    SUM(od.dish_price * od.dish_amount) + o.delivery_fee AS total_order_price
-FROM 
-    Orders o
-LEFT JOIN 
-    Placed p ON o.order_id = p.order_id
-LEFT JOIN 
-    OrderedDishes od ON o.order_id = od.order_id
-GROUP BY 
-    o.order_id, o.date, o.delivery_fee, o.delivery_address, p.cust_id;
-'''
+
+
 # ============================== VIEW QUERIES ==============================s
+
+
+def testSelectionFunction() -> ReturnValue:
+    QUERY_TEST = '''
+        SELECT * FROM DishAvgPopularityView
+    '''
+    query = sql.SQL(QUERY_TEST)
+    result, rows_amount, data = handle_query_selection(query)
+
+    return result
 
 
 # in case of an illegal or a failed database communication
@@ -227,7 +239,9 @@ def create_tables() -> None:
             CREATE_ORDERED_DISHES_TABLE_QUERY + \
             CREATE_DISH_RATINGS_TABLE_QUERY
     # Views Creation
-    query += FULL_ORDER_DETAILS_VIEW
+    query += FULL_ORDER_DETAILS_VIEW + \
+             DISH_POPULARITY_AMONG_UNPLACED_ORDERS_VIEW + \
+             DISH_POPULARITY_VIEW
 
     try:
         conn = Connector.DBConnector()
@@ -510,7 +524,9 @@ def order_does_not_contain_dish(order_id: int, dish_id: int) -> ReturnValue:
 
 def get_all_order_items(order_id: int) -> List[OrderDish]:
     GET_ALL_ORDERED_ITEMS_QUERY = '''
-        SELECT * FROM OrderedDishes WHERE order_id = {order_id}
+        SELECT * FROM OrderedDishes 
+        WHERE order_id = {order_id}
+        ORDER BY dish_id ASC
     '''
     query = sql.SQL(GET_ALL_ORDERED_ITEMS_QUERY).format(
         order_id=sql.Literal(order_id)
@@ -576,7 +592,7 @@ def get_all_customer_ratings(cust_id: int) -> List[Tuple[int, int]]:
 
 def get_order_total_price(order_id: int) -> float:
     GET_ORDER_TOTAL_PRICE_QUERY_FORMAT = '''
-        SELECT * FROM FullOrderDetailsView 
+        SELECT * FROM OrderTotalPriceView 
         WHERE order_id = {order_id}; 
     '''
     query = sql.SQL(GET_ORDER_TOTAL_PRICE_QUERY_FORMAT).format(
@@ -591,12 +607,14 @@ def get_order_total_price(order_id: int) -> float:
 def get_customers_spent_max_avg_amount_money() -> List[int]:
     GET_CUSTOMER_MAX_AVG_QUERY = '''
         WITH tmp_avg_price AS (
-            SELECT cust_id, AVG(total_order_price) AS avg_price FROM FullOrderDetailsView
-            GROUP BY cust_id
+            SELECT p.cust_id, AVG(otp.total_order_price) AS avg_price 
+            FROM Placed p
+            JOIN OrderTotalPriceView otp ON p.order_id = otp.order_id
+            GROUP BY p.cust_id
         )
-        SELECT cust_id FROM tmp_avg_price
-        WHERE avg_price = (SELECT MAX(avg_price) FROM tmp_avg_price)
-        ORDER BY cust_id ASC; 
+        SELECT cust_id FROM tmp_avg_price 
+        WHERE avg_price = (SELECT MAX(avg_price) FROM tmp_avg_price) AND cust_id IS NOT NULL
+        ORDER BY cust_id ASC;
     '''
     query = sql.SQL(GET_CUSTOMER_MAX_AVG_QUERY)
     result, rows_amount, data = handle_query_selection(query)
@@ -605,9 +623,16 @@ def get_customers_spent_max_avg_amount_money() -> List[int]:
 
 
 def get_most_purchased_dish_among_anonymous_order() -> Dish:
-    # TODO: implement
-    pass
+    GET_MOST_PURCHASED_DISH_AMONG_ANONYMOUS_ORDERS_QUERY = '''
+        SELECT * FROM PopularDishesInAnonymousOrders
+    '''
 
+    query = sql.SQL(GET_MOST_PURCHASED_DISH_AMONG_ANONYMOUS_ORDERS_QUERY)
+    result, rows_amount, data = handle_query_selection(query)
+    if rows_amount > 1:
+        assert (0)
+
+    return Dish(data[0]['dish_id'], data[0]['name'], data[0]['price'], data[0]['is_active'])
 
 def did_customer_order_top_rated_dishes(cust_id: int) -> bool:
     # TODO: implement
