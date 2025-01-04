@@ -9,144 +9,102 @@ from Business.Order import Order, BadOrder
 from Business.Dish import Dish, BadDish
 from Business.OrderDish import OrderDish
 
+
+#flags
+# DEBUG_FLAG = True
 DEBUG_FLAG = False
 
-# ----------------------- Tables Operations Queries -----------------------
-CLEAR_TABLES_QUERY = '''
-DELETE FROM Customer;
-DELETE FROM Orders;
-DELETE FROM Dish;
-DELETE FROM Placed;
-DELETE FROM OrderedDishes;
-DELETE FROM DishRatings;
-'''
-DROP_TABLES_QUERY = '''
-DROP TABLE IF EXISTS Customer CASCADE;
-DROP TABLE IF EXISTS Orders CASCADE;
-DROP TABLE IF EXISTS Dish CASCADE;
-DROP TABLE IF EXISTS Placed CASCADE;
-DROP TABLE IF EXISTS OrderedDishes CASCADE;
-DROP TABLE IF EXISTS DishRatings CASCADE;
-'''
+# ----------------------------- QUERY TABLE DEFINISION: -----------------------------
 
+All_TABLE_NAMES = ('Customer', 'Orders', 'Dish', 'Placed', 'OrderedDishes', 'DishRatings')
 
+#object tables
 CREATE_CUSTOMER_TABLE_QUERY = '''
 CREATE TABLE Customer
 (
-    cust_id INTEGER PRIMARY KEY CHECK (cust_id > 0),
-    full_name TEXT NOT NULL,
-    age INTEGER NOT NULL CHECK (age >= 18 AND age <= 120),
-    phone TEXT NOT NULL CHECK (LENGTH(phone) = 10)
+    cust_id     INTEGER     NOT NULL,
+    full_name   TEXT        NOT NULL,
+    age         INTEGER     NOT NULL,
+    phone       VARCHAR(10) NOT NULL,
+    PRIMARY KEY (cust_id),
+    CHECK       (cust_id > 0),
+    CHECK       (age >= 18  AND age <= 120),
+    CHECK       (LENGTH(phone) = 10)
 );
 '''
 
 CREATE_ORDER_TABLE_QUERY = '''
 CREATE TABLE Orders
 (
-    order_id INTEGER PRIMARY KEY CHECK (order_id > 0),
-    date TIMESTAMP NOT NULL,
-    delivery_fee DECIMAL NOT NULL CHECK (delivery_fee >= 0),
-    delivery_address TEXT NOT NULL CHECK (LENGTH(delivery_address) >= 5)
+    order_id            INTEGER                         NOT NULL,        
+    date                TIMESTAMP(0) WITHOUT TIME ZONE  NOT NULL,
+    delivery_fee        DECIMAL                         NOT NULL,      
+    delivery_address    TEXT                            NOT NULL,
+    PRIMARY KEY         (order_id),    
+    CHECK               (order_id > 0),
+    CHECK               (delivery_fee > 0),
+    CHECK               (LENGTH(delivery_address) >= 5)
 );
 '''
 
 CREATE_DISH_TABLE_QUERY = '''
 CREATE TABLE Dish
 (
-    dish_id INTEGER PRIMARY KEY CHECK (dish_id > 0),
-    name TEXT NOT NULL CHECK (LENGTH(name) >= 4),
-    price DECIMAL NOT NULL CHECK (price > 0),
-    is_active BOOLEAN NOT NULL
+    dish_id     INTEGER  NOT NULL,
+    name        TEXT     NOT NULL,
+    price       DECIMAL  NOT NULL, 
+    is_active   BOOLEAN  NOT NULL,
+    PRIMARY KEY         (dish_id),
+    CHECK               (dish_id  > 0),
+    CHECK               (price  > 0),
+    CHECK               (LENGTH(name) >= 4)
 );
 '''
 
+#relation tables
 CREATE_PLACED_TABLE_QUERY = '''
 CREATE TABLE Placed
 (
-    cust_id INTEGER NOT NULL,
-    order_id INTEGER PRIMARY KEY NOT NULL,
-    CONSTRAINT fk_cust_id FOREIGN KEY (cust_id) REFERENCES Customer(cust_id) ON DELETE CASCADE,
-    CONSTRAINT fk_order_id FOREIGN KEY (order_id) REFERENCES Orders(order_id) ON DELETE CASCADE,
-    CONSTRAINT unq_order_id UNIQUE (order_id)
+    order_id    INTEGER NOT NULL,
+    cust_id     INTEGER NOT NULL,
+    PRIMARY KEY (order_id),
+    FOREIGN KEY (order_id) REFERENCES Orders(order_id) ON DELETE CASCADE,
+    FOREIGN KEY (cust_id)  REFERENCES Customer(cust_id)
 );
 '''
+
 
 CREATE_ORDERED_DISHES_TABLE_QUERY = '''
 CREATE TABLE OrderedDishes
 (
-    order_id INTEGER NOT NULL,
-    dish_id INTEGER NOT NULL,
-    dish_amount INTEGER NOT NULL CHECK (dish_amount >= 0),
-    dish_price DECIMAL NOT NULL CHECK (dish_price > 0),
-    CONSTRAINT fk_order_id FOREIGN KEY (order_id) REFERENCES Orders(order_id) ON DELETE CASCADE,
-    CONSTRAINT fk_dish_id FOREIGN KEY (dish_id) REFERENCES Dish(dish_id) ON DELETE CASCADE,
-    CONSTRAINT unq_dish_order UNIQUE (order_id, dish_id)
+    order_id        INTEGER     NOT NULL,
+    dish_id         INTEGER     NOT NULL,
+    dish_price      DECIMAL     NOT NULL,
+    dish_amount     INTEGER     NOT NULL,
+    PRIMARY KEY     (order_id,  dish_id), 
+    FOREIGN KEY     (order_id)  REFERENCES  Orders(order_id) ON DELETE CASCADE,
+    FOREIGN KEY     (dish_id)   REFERENCES  Dish(dish_id), 
+    CHECK           (dish_price > 0),
+    CHECK           (dish_amount > 0)    
 );
 '''
-
 CREATE_DISH_RATINGS_TABLE_QUERY = '''
 CREATE TABLE DishRatings
 (
-    cust_id INTEGER NOT NULL,
-    dish_id INTEGER NOT NULL,
-    rating INTEGER NOT NULL CHECK (1 <= rating AND rating <= 5),
-    CONSTRAINT fk_cust_id FOREIGN KEY (cust_id) REFERENCES Customer(cust_id) ON DELETE CASCADE,
-    CONSTRAINT fk_dish_id FOREIGN KEY (dish_id) REFERENCES Dish(dish_id) ON DELETE CASCADE,
-    CONSTRAINT unq_dish_rating UNIQUE (cust_id, dish_id)
+    cust_id     INTEGER     NOT NULL, 
+    dish_id     INTEGER     NOT NULL,
+    rating      INTEGER     NOT NULL,
+    PRIMARY KEY (cust_id,  dish_id), 
+    FOREIGN KEY (cust_id)  REFERENCES   Customer(cust_id) ON DELETE CASCADE,
+    FOREIGN KEY (dish_id)   REFERENCES  Dish(dish_id),
+    CHECK       (rating > 0 AND rating <= 5)
 );
 '''
-
-# ============================== VIEW QUERIES ==============================s
-# (Cust_id | [Order_id) | Date | Delivery_Fee | Delivery_Addr | Total_Order_Price}
-FULL_ORDER_DETAILS_VIEW = '''
-CREATE VIEW OrderTotalPriceView AS
-(
-    SELECT o.order_id AS order_id, (COALESCE(SUM(od.dish_price * od.dish_amount), 0) + o.delivery_fee) AS total_order_price 
-    FROM Orders o
-    LEFT JOIN OrderedDishes od ON o.order_id = od.order_id
-    GROUP BY od.order_id, o.order_id
-);
-'''
+# ------------------------------- Function helper: -------------------------------
 
 
-DISH_POPULARITY_AMONG_UNPLACED_ORDERS_VIEW = '''
-CREATE VIEW PopularDishesInAnonymousOrders AS 
-(
-    SELECT d.dish_id AS dish_id, d.name AS name, d.price AS price, d.is_active AS is_active, SUM(od.dish_amount) AS total_dish_amount
-        FROM OrderedDishes od
-        JOIN Dish d ON od.dish_id = d.dish_id
-        LEFT JOIN Placed p ON od.order_id = p.order_id
-        WHERE p.cust_id IS NULL
-        GROUP BY d.dish_id
-        ORDER BY total_dish_amount DESC, d.dish_id ASC
-        LIMIT 1
-);
-'''
 
-DISH_POPULARITY_VIEW = '''
-CREATE VIEW DishAvgPopularityView AS 
-(
-    SELECT d.dish_id AS dish_id, AVG(COALESCE(dr.rating, 3)) AS avg_rating
-    FROM Dish d 
-    LEFT JOIN DishRatings dr ON d.dish_id = dr.dish_id
-    GROUP BY d.dish_id 
-    ORDER BY d.dish_id ASC
-);
-'''
-
-
-# ============================== VIEW QUERIES ==============================s
-
-
-def testSelectionFunction() -> ReturnValue:
-    QUERY_TEST = '''
-        SELECT * FROM DishAvgPopularityView
-    '''
-    query = sql.SQL(QUERY_TEST)
-    result, rows_amount, data = handle_query_selection(query)
-
-    return result
-
+# ------------------------------- Function helper: -------------------------------
 
 # in case of an illegal or a failed database communication
 def handle_database_exceptions(query: sql.SQL, e: Exception, print_flag = False) -> ReturnValue:
@@ -168,129 +126,83 @@ def handle_database_exceptions(query: sql.SQL, e: Exception, print_flag = False)
         result = ReturnValue.ERROR
     elif isinstance(e, DatabaseException.UNKNOWN_ERROR):
         result = ReturnValue.ERROR
+    elif isinstance(e, DatabaseException.database_ini_ERROR):
+        result = ReturnValue.ERROR        
 
     return result
 
 
-def handle_query_insertion(query: sql.SQL) -> Tuple[ReturnValue, int]:
-    query_result = ReturnValue.ERROR
-    rows_amount = -1
+def handle_query(query: sql.SQL) -> Tuple[ReturnValue, int, Connector.ResultSet, Exception]:
+    query_result = ReturnValue.OK
+    rows_amount = 0
+    result = None
+    recieved_exp = None
     conn = Connector.DBConnector()
-    try:
-        rows_amount, _ = conn.execute(query)
-        conn.commit()
-        query_result = ReturnValue.OK
-    except Exception as e:
-        query_result = handle_database_exceptions(query, e, DEBUG_FLAG)
-    finally:
-        conn.close()
-    return query_result, rows_amount
 
-
-def handle_query_selection(query: sql.SQL) -> Tuple[ReturnValue, int, Connector.ResultSet]:
-    conn = Connector.DBConnector()
-    query_result = (ReturnValue.ERROR, -1, None)
     try:
-        rows_amount, data = conn.execute(query)
-        query_result = (ReturnValue.OK, rows_amount, data)
+        rows_amount, result = conn.execute(query)
         conn.commit()
     except Exception as e:
-        exception_result = handle_database_exceptions(query, e)
-        query_result = (exception_result, -1, None)
-    finally:
-        conn.close()
-
-    return query_result
-
-
-def handle_query_deletion(query: sql.SQL) -> ReturnValue:
-    query_result = ReturnValue.ERROR
-    conn = Connector.DBConnector()
-    try:
-        rows_amount, data_deleted = conn.execute(query)
-        conn.commit()
-        if 0 == rows_amount:
-            query_result = ReturnValue.NOT_EXISTS
-        elif 1 < rows_amount:
-            if DEBUG_FLAG:
-                print(f'Something went wrong on deletion!\n'
-                      f'Deleted {rows_amount} rows - possible meaning UNIQUE VIOLATION!')
-            query_result = ReturnValue.ERROR
-        else:
-            query_result = ReturnValue.OK
-    except Exception as e:
+        recieved_exp = e
         query_result = handle_database_exceptions(query, e, DEBUG_FLAG)
     finally:
         conn.close()
 
-    return query_result
+    return query_result, rows_amount, result, recieved_exp
+
+
+def return_Value_select(qstatus:ReturnValue, rows_effected)-> ReturnValue:
+        # if qstatus == ReturnValue.BAD_PARAMS:
+        #     return ReturnValue.NOT_EXISTS
+        if qstatus == ReturnValue.OK and rows_effected == 0:
+            return ReturnValue.NOT_EXISTS
+        return qstatus
+
 
 
 # ---------------------------------- CRUD API: ----------------------------------
 # Basic database functions
 
+
 def create_tables() -> None:
     conn = None
     # Tables Creation
-    query = CREATE_CUSTOMER_TABLE_QUERY + \
+    CREATE_TABLES_QUERY_FORMAT = CREATE_CUSTOMER_TABLE_QUERY + \
             CREATE_ORDER_TABLE_QUERY + \
             CREATE_DISH_TABLE_QUERY + \
             CREATE_PLACED_TABLE_QUERY + \
-            CREATE_ORDERED_DISHES_TABLE_QUERY + \
-            CREATE_DISH_RATINGS_TABLE_QUERY
+            CREATE_ORDERED_DISHES_TABLE_QUERY  + \
+            CREATE_DISH_RATINGS_TABLE_QUERY + \
+            CREATE_VIEW_TEST
     # Views Creation
-    query += FULL_ORDER_DETAILS_VIEW + \
-             DISH_POPULARITY_AMONG_UNPLACED_ORDERS_VIEW + \
-             DISH_POPULARITY_VIEW
+    # query += FULL_ORDER_DETAILS_VIEW + \
+    #          DISH_POPULARITY_AMONG_UNPLACED_ORDERS_VIEW + \
+    #          DISH_POPULARITY_VIEW
 
-    try:
-        conn = Connector.DBConnector()
-        query = sql.SQL(query)
-        conn.execute(query)
-        conn.commit()
-
-    except Exception as e:
-        handle_database_exceptions(query, e, DEBUG_FLAG)
-    finally:
-        conn.close()
+    query = sql.SQL(CREATE_TABLES_QUERY_FORMAT)
+    handle_query(query)
 
 
 def clear_tables() -> None:
-    conn = None
-    try:
-        conn = Connector.DBConnector()
-        query = sql.SQL(CLEAR_TABLES_QUERY)
-        conn.execute(query)
-        conn.commit()
-
-    except Exception as e:
-        handle_database_exceptions(query, e, DEBUG_FLAG)
-    finally:
-        conn.close()
+    CLEAR_TABLES_QUERY_FORMAT = '\n'.join([f"DELETE FROM {table};" for table in All_TABLE_NAMES])
+    query = sql.SQL(CLEAR_TABLES_QUERY_FORMAT)
+    handle_query(query)
 
 
 def drop_tables() -> None:
-    conn = None
-    try:
-        conn = Connector.DBConnector()
-        query = sql.SQL(DROP_TABLES_QUERY)
-        conn.execute(query)
-        conn.commit()
-
-    except Exception as e:
-        handle_database_exceptions(query, e, DEBUG_FLAG)
-    finally:
-        conn.close()
+    DROP_TABLES_QUERY_FORMAT = '\n'.join([f"DROP TABLE IF EXISTS {table} CASCADE;" for table in All_TABLE_NAMES])
+    query = sql.SQL(DROP_TABLES_QUERY_FORMAT)
+    handle_query(query)
+    
 
 
 # CRUD API
 
 def add_customer(customer: Customer) -> ReturnValue:
     ADD_CUSTOMER_QUERY_FORMAT = '''
-        INSERT INTO Customer(cust_id, full_name, age, phone)
+        INSERT INTO Customer(cust_id,full_name,age,phone)
         VALUES({cust_id}, {full_name}, {age}, {phone})
-    '''
-
+    '''  
     query = sql.SQL(ADD_CUSTOMER_QUERY_FORMAT).format(
         cust_id = sql.Literal(customer.get_cust_id()),
         full_name = sql.Literal(customer.get_full_name()),
@@ -298,87 +210,81 @@ def add_customer(customer: Customer) -> ReturnValue:
         phone = sql.Literal(customer.get_phone())
     )
 
-    ret_val, _ = handle_query_insertion(query)
+    q_status, _, _, _ = handle_query(query)
+    return q_status
 
-    return ret_val
 
 
 def get_customer(customer_id: int) -> Customer:
     GET_CUSTOMER_QUERY_FORMAT = '''
         SELECT * FROM Customer WHERE cust_id={cust_id}
     '''
-    result = BadCustomer()
-
     query = sql.SQL(GET_CUSTOMER_QUERY_FORMAT).format(
         cust_id = sql.Literal(customer_id)
     )
-
-    _, rows_effected, rows = handle_query_selection(query)
-    if 1 == rows_effected:
-        result = Customer(rows[0]['cust_id'], rows[0]['full_name'], rows[0]['age'], rows[0]['phone'])
-
-    return result
+    qstatus, rows_effected, rows, _ = handle_query(query)
+    qstatus = return_Value_select(qstatus,rows_effected)
+   
+    if qstatus != ReturnValue.OK:
+        retObject = BadCustomer()
+    else:
+        retObject = Customer(rows[0]['cust_id'], rows[0]['full_name'], rows[0]['age'], rows[0]['phone'])
+    return retObject
 
 
 def delete_customer(customer_id: int) -> ReturnValue:
     DELETE_CUSTOMER_QUERY_FORMAT = '''
         DELETE FROM Customer WHERE cust_id={cust_id}
     '''
-
     query = sql.SQL(DELETE_CUSTOMER_QUERY_FORMAT).format(
         cust_id = sql.Literal(customer_id)
     )
-    ret_val = handle_query_deletion(query)
-
-    return ret_val
+    qstatus, rows_effected, _, _ = handle_query(query)
+    return return_Value_select(qstatus, rows_effected)
 
 
 def add_order(order: Order) -> ReturnValue:
+    # TODO- order.get_datetime() should be in secend ?
     ADD_ORDER_QUERY_FORMAT = '''
         INSERT INTO Orders(order_id, date, delivery_fee, delivery_address)
         VALUES({order_id}, {date}, {delivery_fee}, {delivery_address})
     '''
-
     query = sql.SQL(ADD_ORDER_QUERY_FORMAT).format(
         order_id = sql.Literal(order.get_order_id()),
         date = sql.Literal(order.get_datetime()),
         delivery_fee = sql.Literal(order.get_delivery_fee()),
         delivery_address = sql.Literal(order.get_delivery_address())
     )
-
-    ret_val, _ = handle_query_insertion(query)
-
-    return ret_val
+    q_status, _, _, _ = handle_query(query)
+    return q_status
 
 
 def get_order(order_id: int) -> Order:
     GET_ORDER_QUERY_FORMAT = '''
         SELECT * FROM Orders WHERE order_id={order_id}
     '''
-    result = BadOrder()
-
     query = sql.SQL(GET_ORDER_QUERY_FORMAT).format(
         order_id = sql.Literal(order_id)
     )
+    qstatus, rows_effected, rows, _ = handle_query(query)
+    qstatus = return_Value_select(qstatus, rows_effected)
+    if qstatus != ReturnValue.OK:
+        retObject = BadOrder()
+    else:
+        retObject = Order(rows[0]['order_id'], rows[0]['date'], rows[0]['delivery_fee'], rows[0]['delivery_address'])
+    return retObject    
 
-    _, rows_effected, rows = handle_query_selection(query)
-    if 1 == rows_effected:
-        result = Order(rows[0]['order_id'], rows[0]['date'], rows[0]['delivery_fee'], rows[0]['delivery_address'])
-
-    return result
 
 
 def delete_order(order_id: int) -> ReturnValue:
     DELETE_ORDER_QUERY_FORMAT = '''
-        DELETE FROM Orders WHERE order_id={order_id}
+    DELETE FROM Orders WHERE order_id={order_id}
     '''
-
     query = sql.SQL(DELETE_ORDER_QUERY_FORMAT).format(
         order_id = sql.Literal(order_id)
     )
-    ret_val = handle_query_deletion(query)
-
-    return ret_val
+    qstatus, rows_effected, _, _ = handle_query(query)
+    return return_Value_select(qstatus, rows_effected)
 
 
 def add_dish(dish: Dish) -> ReturnValue:
@@ -386,141 +292,108 @@ def add_dish(dish: Dish) -> ReturnValue:
         INSERT INTO Dish(dish_id, name, price, is_active)
         VALUES({dish_id}, {name}, {price}, {is_active})
     '''
-
     query = sql.SQL(ADD_DISH_QUERY_FORMAT).format(
         dish_id = sql.Literal(dish.get_dish_id()),
         name = sql.Literal(dish.get_name()),
         price = sql.Literal(dish.get_price()),
         is_active = sql.Literal(dish.get_is_active())
     )
-
-    ret_val, _ = handle_query_insertion(query)
-
-    return ret_val
-
+    qstatus, rows_effected, _, _ = handle_query(query)
+    return qstatus
 
 def get_dish(dish_id: int) -> Dish:
     GET_DISH_QUERY_FORMAT = '''
         SELECT * FROM Dish WHERE dish_id={dish_id}
     '''
-    result = BadDish()
-
+    retObject = BadDish()
     query = sql.SQL(GET_DISH_QUERY_FORMAT).format(
         dish_id = sql.Literal(dish_id)
     )
+    qstatus, rows_effected, rows, _ = handle_query(query)
+    qstatus = return_Value_select(qstatus, rows_effected)
 
-    _, rows_effected, rows = handle_query_selection(query)
-    if 1 == rows_effected:
-        result = Dish(rows[0]['dish_id'], rows[0]['name'], rows[0]['price'], rows[0]['is_active'])
-
-    return result
+    if qstatus == ReturnValue.OK:
+        retObject = Dish(rows[0]['dish_id'], rows[0]['name'], rows[0]['price'], rows[0]['is_active'])
+    return retObject
 
 
 def update_dish_price(dish_id: int, price: float) -> ReturnValue:
-    result = ReturnValue.ERROR
     UPDATE_DISH_PRICE_QUERY_FORMAT = '''
         UPDATE Dish SET price = {price} WHERE (dish_id={dish_id} AND is_active=TRUE)
     '''
-
     query = sql.SQL(UPDATE_DISH_PRICE_QUERY_FORMAT).format(
         dish_id = sql.Literal(dish_id),
         price = sql.Literal(price)
     )
-    result, rows_updated = handle_query_insertion(query)
-    if ReturnValue.OK == result and 0 == rows_updated:
-        # (Evgeny) - As I understand this is the case when we are trying "Change the price of an un-active dish"
-        result = ReturnValue.NOT_EXISTS
-
-    return result
-
+    qstatus, rows_effected, _, _ = handle_query(query)
+    if ReturnValue.OK == qstatus and 0 == rows_effected:
+        qstatus = ReturnValue.NOT_EXISTS
+    return  qstatus
 
 def update_dish_active_status(dish_id: int, is_active: bool) -> ReturnValue:
-    result = ReturnValue.ERROR
     UPDATE_DISH_PRICE_QUERY_FORMAT = '''
-            UPDATE Dish SET is_active = {is_active} WHERE dish_id={dish_id}
-        '''
-
+        UPDATE Dish SET is_active = {is_active} WHERE dish_id={dish_id}
+    '''
     query = sql.SQL(UPDATE_DISH_PRICE_QUERY_FORMAT).format(
         dish_id = sql.Literal(dish_id),
         is_active = sql.Literal(is_active)
     )
-    result, rows_updated = handle_query_insertion(query)
-    if ReturnValue.OK == result and 0 == rows_updated:
-        # (Evgeny) - As I understand this is the case when we are trying "Change the status of a 'non-existing in the system' dish"
-        result = ReturnValue.NOT_EXISTS
-
-    return result
+    qstatus, rows_effected, _, _ = handle_query(query)
+    if ReturnValue.OK == qstatus and 0 == rows_effected:
+        qstatus = ReturnValue.NOT_EXISTS
+    return qstatus
 
 
 def customer_placed_order(customer_id: int, order_id: int) -> ReturnValue:
-    result = ReturnValue.ERROR
     CUSTOMER_PLACED_ORDER_QUERY_FORMAT = '''
         INSERT INTO Placed(cust_id, order_id)
         VALUES({cust_id}, {order_id})
     '''
-
     query = sql.SQL(CUSTOMER_PLACED_ORDER_QUERY_FORMAT).format(
         cust_id=sql.Literal(customer_id),
         order_id=sql.Literal(order_id)
     )
-    ret_val, _ = handle_query_insertion(query)
-
-    return ret_val
-
+    qstatus, rows_effected, _, _ = handle_query(query)
+    return qstatus
 
 def get_customer_that_placed_order(order_id: int) -> Customer:
     GET_CUSTOMER_THAT_PLACED_ORDER_QUERY = '''
         SELECT * FROM Customer WHERE cust_id = (SELECT cust_id FROM Placed WHERE order_id = {order_id})
     '''
+    retObject = BadCustomer()
     query = sql.SQL(GET_CUSTOMER_THAT_PLACED_ORDER_QUERY).format(
         order_id = sql.Literal(order_id)
     )
-
-    retval = BadCustomer()
-    result, rows_amount, data = handle_query_selection(query)
-    if 1 == rows_amount:
-        retval = Customer(data[0]['cust_id'], data[0]['full_name'], data[0]['age'], data[0]['phone'])
-
-    return retval
-
-
+    qstatus, rows_effected, data, _ = handle_query(query)
+    qstatus = return_Value_select(qstatus,rows_effected)
+    if ReturnValue.OK == qstatus:
+        retObject = Customer(data[0]['cust_id'], data[0]['full_name'], data[0]['age'], data[0]['phone'])
+    return retObject    
 
 def order_contains_dish(order_id: int, dish_id: int, amount: int) -> ReturnValue:
-    ORDER_CONTAIN_DISH_QUERY_FORMAT = '''
+    ORDER_CONTAIN_DISH_QUERY_FORMAT = f'''
         INSERT INTO OrderedDishes(order_id, dish_id, dish_amount, dish_price)
-        VALUES(
-            {order_id}, 
-            {dish_id}, 
-            {amount}, 
+        VALUES({order_id}, {dish_id}, {amount}, 
             (SELECT price FROM Dish WHERE (dish_id = {dish_id} AND is_active = TRUE))
         )
     '''
-    query = sql.SQL(ORDER_CONTAIN_DISH_QUERY_FORMAT).format(
-        order_id = sql.Literal(order_id),
-        dish_id = sql.Literal(dish_id),
-        amount = sql.Literal(amount)
-    )
-    ret_val, rows_inserted = handle_query_insertion(query)
-    if ReturnValue.BAD_PARAMS == ret_val and order_id > 0 and dish_id > 0 and amount >= 0:
-        # (Evgeny) - As I understand this is the case when we are trying "Adding a dish to an order while the dish is not active"
-        ret_val = ReturnValue.NOT_EXISTS
-
-    return ret_val
+    query = sql.SQL(ORDER_CONTAIN_DISH_QUERY_FORMAT)
+    qstatus, rows_effected, _, exp = handle_query(query)
+    if isinstance(exp, DatabaseException.NOT_NULL_VIOLATION):
+        qstatus = ReturnValue.NOT_EXISTS
+    return qstatus
 
 
 def order_does_not_contain_dish(order_id: int, dish_id: int) -> ReturnValue:
     DELETE_ORDER_QUERY_FORMAT = '''
         DELETE FROM OrderedDishes WHERE (order_id={order_id} AND dish_id={dish_id})
     '''
-
     query = sql.SQL(DELETE_ORDER_QUERY_FORMAT).format(
         order_id=sql.Literal(order_id),
         dish_id=sql.Literal(dish_id)
     )
-    ret_val = handle_query_deletion(query)
-
-    return ret_val
-
+    qstatus, rows_effected, _, _ = handle_query(query)
+    return return_Value_select(qstatus,rows_effected)
 
 def get_all_order_items(order_id: int) -> List[OrderDish]:
     GET_ALL_ORDERED_ITEMS_QUERY = '''
@@ -528,23 +401,22 @@ def get_all_order_items(order_id: int) -> List[OrderDish]:
         WHERE order_id = {order_id}
         ORDER BY dish_id ASC
     '''
+    retObject = []
     query = sql.SQL(GET_ALL_ORDERED_ITEMS_QUERY).format(
         order_id=sql.Literal(order_id)
     )
-
-    result, rows_amount, data = handle_query_selection(query)
-    retval = [OrderDish(row['dish_id'], row['dish_amount'], row['dish_price']) for row in data]
-
-    return retval
+    qstatus, rows_effected, data, _ = handle_query(query)
+    qstatus = return_Value_select(qstatus,rows_effected)
+    if ReturnValue.OK == qstatus:
+        retObject = [OrderDish(row['dish_id'], row['dish_amount'], row['dish_price']) for row in data]
+    
+    return retObject 
 
 
 def customer_rated_dish(cust_id: int, dish_id: int, rating: int) -> ReturnValue:
     CUSTOMER_DISH_RATE_QUERY_FORMAT = '''
         INSERT INTO DishRatings(cust_id, dish_id, rating)
-        VALUES(
-            {cust_id}, 
-            {dish_id}, 
-            {rating} 
+        VALUES({cust_id}, {dish_id}, {rating} 
         )
     '''
     query = sql.SQL(CUSTOMER_DISH_RATE_QUERY_FORMAT).format(
@@ -552,87 +424,53 @@ def customer_rated_dish(cust_id: int, dish_id: int, rating: int) -> ReturnValue:
         dish_id=sql.Literal(dish_id),
         rating=sql.Literal(rating)
     )
-    ret_val, _ = handle_query_insertion(query)
-
-    return ret_val
-
+    qstatus, rows_effected, _, _ = handle_query(query)
+    return qstatus
+    
 
 def customer_deleted_rating_on_dish(cust_id: int, dish_id: int) -> ReturnValue:
     DELETE_DISH_RATING_QUERY_FORMAT = '''
         DELETE FROM DishRatings WHERE (cust_id={cust_id} AND dish_id={dish_id})
     '''
-
     query = sql.SQL(DELETE_DISH_RATING_QUERY_FORMAT).format(
         cust_id=sql.Literal(cust_id),
         dish_id=sql.Literal(dish_id)
     )
-    ret_val = handle_query_deletion(query)
-
-    return ret_val
-
+    qstatus, rows_effected, _, _ = handle_query(query)
+    return return_Value_select(qstatus, rows_effected)
 
 def get_all_customer_ratings(cust_id: int) -> List[Tuple[int, int]]:
     GET_ALL_CUSTOMER_RATINGS_QUERY_FORMAT = '''
         SELECT * FROM DishRatings WHERE cust_id = {cust_id} ORDER BY dish_id ASC
     '''
+    retObject = []
     query = sql.SQL(GET_ALL_CUSTOMER_RATINGS_QUERY_FORMAT).format(
         cust_id=sql.Literal(cust_id)
     )
-
-    result, rows_amount, data = handle_query_selection(query)
-    retval = [(row['dish_id'], row['rating']) for row in data]
-
-    return retval
-
-
+    qstatus, rows_effected, data, _ = handle_query(query)
+    qstatus = return_Value_select(qstatus, rows_effected)
+    if ReturnValue.OK == qstatus:
+        retObject = [(row['dish_id'], row['rating']) for row in data]
+    return retObject     
 # ---------------------------------- BASIC API: ----------------------------------
 
 # Basic API
 
 
 def get_order_total_price(order_id: int) -> float:
-    GET_ORDER_TOTAL_PRICE_QUERY_FORMAT = '''
-        SELECT * FROM OrderTotalPriceView 
-        WHERE order_id = {order_id}; 
-    '''
-    query = sql.SQL(GET_ORDER_TOTAL_PRICE_QUERY_FORMAT).format(
-        order_id = sql.Literal(order_id)
-    )
-
-    result, rows_amount, data = handle_query_selection(query)
-
-    return float(data[0]['total_order_price'])
+    # TODO: implement
+    pass
 
 
 def get_customers_spent_max_avg_amount_money() -> List[int]:
-    GET_CUSTOMER_MAX_AVG_QUERY = '''
-        WITH tmp_avg_price AS (
-            SELECT p.cust_id, AVG(otp.total_order_price) AS avg_price 
-            FROM Placed p
-            JOIN OrderTotalPriceView otp ON p.order_id = otp.order_id
-            GROUP BY p.cust_id
-        )
-        SELECT cust_id FROM tmp_avg_price 
-        WHERE avg_price = (SELECT MAX(avg_price) FROM tmp_avg_price) AND cust_id IS NOT NULL
-        ORDER BY cust_id ASC;
-    '''
-    query = sql.SQL(GET_CUSTOMER_MAX_AVG_QUERY)
-    result, rows_amount, data = handle_query_selection(query)
-
-    return [row['cust_id'] for row in data]
+    # TODO: implement
+    pass
 
 
 def get_most_purchased_dish_among_anonymous_order() -> Dish:
-    GET_MOST_PURCHASED_DISH_AMONG_ANONYMOUS_ORDERS_QUERY = '''
-        SELECT * FROM PopularDishesInAnonymousOrders
-    '''
+    # TODO: implement
+    pass
 
-    query = sql.SQL(GET_MOST_PURCHASED_DISH_AMONG_ANONYMOUS_ORDERS_QUERY)
-    result, rows_amount, data = handle_query_selection(query)
-    if rows_amount > 1:
-        assert (0)
-
-    return Dish(data[0]['dish_id'], data[0]['name'], data[0]['price'], data[0]['is_active'])
 
 def did_customer_order_top_rated_dishes(cust_id: int) -> bool:
     # TODO: implement
@@ -662,3 +500,13 @@ def get_cumulative_profit_per_month(year: int) -> List[Tuple[int, float]]:
 def get_potential_dish_recommendations(cust_id: int) -> List[int]:
     # TODO: implement
     pass
+
+
+
+
+
+
+# if __name__ == '__main__':
+#     print("0. Creating all tables")
+#     create_tables()
+#     drop_tables()
