@@ -100,6 +100,62 @@ CREATE TABLE DishRatings
     CHECK       (rating > 0 AND rating <= 5)
 );
 '''
+
+
+CREATE_VIEW_ORDERSSUM = '''
+CREATE VIEW OrdersSum AS
+    SELECT Orders.order_id AS order_id,
+           COALESCE(SUM(OrderedDishes.dish_price * OrderedDishes.dish_amount),0)AS toatal,
+            MAX(Orders.delivery_fee) AS delivery_fee
+    FROM Orders LEFT OUTER JOIN OrderedDishes
+        ON Orders.order_id = OrderedDishes.order_id
+    GROUP BY Orders.order_id   
+'''
+
+CREATE_VIEW_CUSTOMESRORDERS = '''
+CREATE VIEW CustomersOrders AS
+    SELECT Customer.cust_id AS cust_id,
+           Orders.order_id  AS order_id
+    FROM Orders LEFT OUTER JOIN (Placed JOIN Customer 
+                                        ON (Customer.cust_id = Placed.cust_id))   
+                 ON (Orders.order_id = Placed.order_id)                 
+
+'''
+
+
+CREATE_VIEW_RATINGSCORE= '''
+CREATE VIEW RatingScore AS
+    SELECT Dish.dish_id AS dish_id,COALESCE(SUM(DishRatings.rating)/COUNT(*),3) AS ave
+    FROME Dish LEFT OUTER JOIN DishRatings ON (Dish.dish_id = DishRatings.dish_id)
+    GROUP BY Dish.dish_id
+                                
+'''
+
+
+CREATE_VIEW_APPO= '''
+CREATE VIEW appo AS
+    SELECT dish_id , dish_price , SUM(dish_amount)/COUNT(*)*dish_price AS val 
+    FROM OrderedDishes
+    GROUP BY dish_id , dish_price
+    
+'''
+
+CREATE_VIEW_AGREE_ON_ADISH= '''
+CREATE VIEW Agree AS
+    SELECT  D1.cust_id AS c1,
+            D2.cust_id AS c2,
+            D1.dish_id AS dish_id
+
+    FROM    DishRatings D1 JOIN DishRatings D2
+                           ON   (D1.dish_id = D2.dish_id)
+    WHERE (D1.cust_id <> D2.cust_id ) AND (D1.rating >= 4) AND (D2.rating >= 4)  
+    
+'''
+
+All_TABLE_NAMES = ('Customer', 'Orders', 'Dish', 'Placed', 'OrderedDishes', 'DishRatings')
+ALL_VIEW_NAMES =('OrdersSum', 'CustomersOrders','RatingScore','appo','Agree')
+
+
 # ------------------------------- Function helper: -------------------------------
 
 
@@ -173,11 +229,11 @@ def create_tables() -> None:
             CREATE_PLACED_TABLE_QUERY + \
             CREATE_ORDERED_DISHES_TABLE_QUERY  + \
             CREATE_DISH_RATINGS_TABLE_QUERY + \
-            CREATE_VIEW_TEST
-    # Views Creation
-    # query += FULL_ORDER_DETAILS_VIEW + \
-    #          DISH_POPULARITY_AMONG_UNPLACED_ORDERS_VIEW + \
-    #          DISH_POPULARITY_VIEW
+            CREATE_VIEW_ORDERSSUM + \
+            CREATE_VIEW_CUSTOMESRORDERS + \
+            CREATE_VIEW_RATINGSCORE + \
+            CREATE_VIEW_APPO + \
+            CREATE_VIEW_AGREE_ON_ADISH
 
     query = sql.SQL(CREATE_TABLES_QUERY_FORMAT)
     handle_query(query)
@@ -458,55 +514,198 @@ def get_all_customer_ratings(cust_id: int) -> List[Tuple[int, int]]:
 
 
 def get_order_total_price(order_id: int) -> float:
-    # TODO: implement
-    pass
+    #TODO the float to dable ?
+    GET_ORDER_TOTAL_PRICE_QUERY_FORMAT = '''
+        SELECT toatal+delivery_fee
+        FROM OrdersSum
+        WHERE OrdersSum.order_id = {order_id}
+        LIMIT 1
+    '''
+    query = sql.SQL(GET_ORDER_TOTAL_PRICE_QUERY_FORMAT).format(
+        order_id = sql.Literal(order_id)
+    )
+    _, _, data, _ = handle_query(query)
+    return float(data[0]['total_order_price'])
 
 
 def get_customers_spent_max_avg_amount_money() -> List[int]:
-    # TODO: implement
-    pass
+    #:including dekiveryfee see in oazzza @34
+    GET_CUSTOMERS_SPENT_MAX_AVG_AMOUNT_MONY_QUERY_FORMAT = '''
+        SELECT P.cust_id
+        FROM CustomersOrders AS Co JOIN OrdersSum AS Os ON(Co.order_id = Os.order_id)
+        WHERE Co.cust_id IS NOT NULL
+        GROUP BY Co.cust_id
+        HAVING  SUM(Os.toatal + Os.delivery_fee)/COUNT(*) =(
+                    SELECT  sum(OrdersSum.toatal + OrdersSum.delivery_fee)/COUNT(*) max
+                    FROM CustomersOrders JOIN OrdersSum ON(CustomersOrders.order_id = OrdersSum.order_id)
+                    WHERE  CustomersOrders.cust_id IS NOT NULL 
+                    GROUP BY CustomersOrders.cust_id                      
+                    ORDER BY SUM(OrdersSum.toatal + OrdersSum.delivery_fee)/COUNT(*) DESC
+                    LIMIT 1 )
+        ORDER BY Co.cust_id ASC
+
+    ''' 
+    query = sql.SQL(GET_CUSTOMERS_SPENT_MAX_AVG_AMOUNT_MONY_QUERY_FORMAT)
+    _, _, data, _ = handle_query(query)
+    return [row['cust_id'] for row in data]
 
 
 def get_most_purchased_dish_among_anonymous_order() -> Dish:
-    # TODO: implement
-    pass
+    GET_MOST_PURCHASED_DISH_AMONG_ANONYMOUS_QUERY_FORMAT = '''
+    SELECT *
+    FROM Dish
+    WHERE dish_id =(
+        SELECT OrderedDishes.dish_id 
+        FROM CustomersOrders JOIN OrderedDishes ON(CustomersOrders.order_id = OrderedDishes.order_id)
+        WHERE CustomersOrders.cust_id IS NULL
+        GROUP BY OrderedDishes.dish_id 
+        ORDER BY SUM(OrderedDishes.dish_amount) ASC
+        LIMIIT 1
+    )
+                                               
+    '''
+    query = sql.SQL(GET_MOST_PURCHASED_DISH_AMONG_ANONYMOUS_QUERY_FORMAT)
+    _, rows_amount, data,_ = handle_query(query)
+    if rows_amount > 1:
+        assert (0)
+
+    return Dish(data[0]['dish_id'], data[0]['name'], data[0]['price'], data[0]['is_active'])
 
 
 def did_customer_order_top_rated_dishes(cust_id: int) -> bool:
-    # TODO: implement
-    pass
+    DID_CUSTOMER_ORDER_TOP_RATED_DISHES_QUERY_FORMAT = '''
 
+    SELECT COUNT(*)
+    FROM CustomersOrders JOIN OrderedDishes ON(CustomersOrders.order_id = OrderedDishes.order_id)
+    WHERE CustomersOrders.cust_id IS NOT NULL
+                 AND CustomersOrders.cust_id = {cust_id}
+                    AND CustomersOrders.order_id IN(
+                                            SELECT dish_id 
+                                            FROME RatingScore
+                                            ORDER BY ave DESC , dish_id ASC
+                                            LIMIT 5)
+    LIMIT 1                                        
+                           
+    '''
+    query = sql.SQL(DID_CUSTOMER_ORDER_TOP_RATED_DISHES_QUERY_FORMAT)
+    _, rows_amount, _, _ = handle_query(query)
+    return rows_amount > 0
 
 # ---------------------------------- ADVANCED API: ----------------------------------
 
 # Advanced API
 
-
 def get_customers_rated_but_not_ordered() -> List[int]:
-    # TODO: implement
-    pass
+    GET_MIN_DISH = '''
+        SELECT dish_id 
+        FROME RatingScore
+        WHERE ave < 3
+        ORDER BY ave ASC , dish_id ASC
+     '''
+    GET_CUSTOMER_RATED_BUT_NOT_ORDER_QUERY_FORMAT = '''
+    SELECT *
+    FROME(
+            (
+                SELECT  DishRatings.cust_id
+                FROM DishRatings
+                WHERE DishRatings.dish_id IN( ''' +GET_MIN_DISH + ''' )
+                ORDER BY DishRatings.cust_id ASC
+            )EXCEPT( 
+                SELECT  CustomersOrders.cust_id
+                FROM CustomersOrders JOIN OrderedDishes ON(CustomersOrders.order_id = OrderedDishes.order_id)
+                WHERE CustomersOrders.cust_id IS NOT NULL AND  OrderedDishes.dish_id IN('''+GET_MIN_DISH + ''')  
+            )
+        ) 
+    ORDER BY cust_id ASC;   
+    '''
+    query = sql.SQL(GET_CUSTOMER_RATED_BUT_NOT_ORDER_QUERY_FORMAT)
+    _, _, data, _ = handle_query(query)
+    return [row['cust_id'] for row in data]
 
 
 def get_non_worth_price_increase() -> List[int]:
-    # TODO: implement
-    pass
+    GET_NON_WORTH_PRICE_INCREASE_QUERY_FORMAT = '''
+    SELECT A.dish_id AS dish_id
+    FROM Appo AS A JOIN (
+                SELECT B.dish_id , MIN(B.dish_price) AS min  
+                FROM Appo AS B
+                GROUP BY B.dish_id
+                HAVING COUNT(*) >= 2
+                ) ON (A.dish_id = B.dish_id)
+            JOIN Appo AS C ON(A.dish_id = C.dish_id AND  C.dish_price = min )
+            JOIN Dish ON (A.dish_id = Dish.dish_id AND A.dish_price =  Dish.price  )
+    WHERE A.dish_price > min AND A.val < C.val AND  Dish.is_active=true
+    ORDER BY A.dish_id ASC  
+    '''
+
+    query = sql.SQL(GET_NON_WORTH_PRICE_INCREASE_QUERY_FORMAT)
+    _, _, data, _ = handle_query(query)
+    return [row['dish_id'] for row in data]
 
 
 def get_cumulative_profit_per_month(year: int) -> List[Tuple[int, float]]:
-    # TODO: implement
-    pass
+    # TODO: AS FLOAT ? see asaigmnt PDF ?
+    # TODO: should we include deliveryfee? i dont think
+    GET_CUMULACTIVE_PROFILE_PER_MONTH_QUERY_FORMAT = '''
+    SELCT Mn.month_number AS month , COALESCE(Data.toatal ,0) AS profit
+    FROME (SELECT 1 AS month_number UNION ALL 
+            SELECT 2 UNION ALL
+            SELECT 3 UNION ALL
+            SELECT 4 UNION ALL
+            SELECT 5 UNION ALL
+            SELECT 6 UNION ALL
+            SELECT 7 UNION ALL
+            SELECT 8 UNION ALL
+            SELECT 9 UNION ALL
+            SELECT 10 UNION ALL
+            SELECT 11 UNION ALL
+            SELECT 12) Mn LEFT JOIN (
+                                    (SELECT EXTRACT(MONTH  FROM TIMESTAMP Orders.date)   AS  month, 
+                                            SUM(OrdersSum.toatal)  AS      toatal,
+                                            SUM(OrdersSum.delivery_fee)  AS   delivery_fee
+                                    FROM Orders JOIN OrdersSum ON (Orders.order_id = OrdersSum.order_id) 
+                                    WHERE EXTRACT(YEAR FROM TIMESTAMP Orders.date) = {year}
+                                    GROUP BY  EXTRACT(MONTH  FROM TIMESTAMP Orders.date))  Data
+                            ) ON (Mn.month_number = Data.month)
+    ORDER BY Mn.month_number DESC              
+                      
+    '''
+    query = sql.SQL(GET_CUMULACTIVE_PROFILE_PER_MONTH_QUERY_FORMAT)
+    _, _, data, _ = handle_query(query)
+    return [(row['month'],float(row['profit'])) for row in data]
 
 
 def get_potential_dish_recommendations(cust_id: int) -> List[int]:
-    # TODO: implement
-    pass
+    GET_POTENTIAL_DISH_RECOMMENDATIONS_QUERY_FORMAT = '''
+    SELECT dish_id
+    FROME(
+            (
+                WITH RECURSIVE transitiveAgree AS(
+                        SELECT c1 ,c2 ,dish_id
+                        FROM Agree
+                        WHERE Agree.c1 =  {cust_id}
+                    UNION
+                        SELECT transitiveAgree.c1 , Agree.c2 , Agree.dish_id   
+                        FROM transitiveAgree JOIN Agree
+                                            ON(transitiveAgree.c2 = Agree.c1)
+                    )                            
+                SELECT transitiveAgree.dish_id AS dish_id
+                FROM transitiveAgree 
+            )EXCEPT(
+                SELECT OrderedDishes.dish_id AS dish_id
+                FROM CustomersOrders JOIN OrderedDishes ON (OrderedDishes.order_id = CustomersOrders.order_id)
+                WHERE CustomersOrders.cust_id = {cust_id} AND CustomersOrders.cust_id  IS NOT NULL
+            )
+        )
+    ORDER BY dish_id ASC                          
 
-
-
-
+    '''
+    query = sql.SQL(GET_POTENTIAL_DISH_RECOMMENDATIONS_QUERY_FORMAT)
+    _, _, data, _ = handle_query(query)
+    return [row['dish_id'] for row in data]
 
 
 # if __name__ == '__main__':
-#     print("0. Creating all tables")
-#     create_tables()
+#      print("0. Creating all tables")
+#      create_tables()
 #     drop_tables()
