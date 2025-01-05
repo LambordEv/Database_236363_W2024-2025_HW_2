@@ -11,12 +11,10 @@ from Business.OrderDish import OrderDish
 
 
 #flags
-# DEBUG_FLAG = True
+#DEBUG_FLAG = True
 DEBUG_FLAG = False
 
 # ----------------------------- QUERY TABLE DEFINISION: -----------------------------
-
-All_TABLE_NAMES = ('Customer', 'Orders', 'Dish', 'Placed', 'OrderedDishes', 'DishRatings')
 
 #object tables
 CREATE_CUSTOMER_TABLE_QUERY = '''
@@ -109,7 +107,7 @@ CREATE VIEW OrdersSum AS
             MAX(Orders.delivery_fee) AS delivery_fee
     FROM Orders LEFT OUTER JOIN OrderedDishes
         ON Orders.order_id = OrderedDishes.order_id
-    GROUP BY Orders.order_id   
+    GROUP BY Orders.order_id;   
 '''
 
 CREATE_VIEW_CUSTOMESRORDERS = '''
@@ -118,25 +116,25 @@ CREATE VIEW CustomersOrders AS
            Orders.order_id  AS order_id
     FROM Orders LEFT OUTER JOIN (Placed JOIN Customer 
                                         ON (Customer.cust_id = Placed.cust_id))   
-                 ON (Orders.order_id = Placed.order_id)                 
+                 ON (Orders.order_id = Placed.order_id);                 
 
 '''
 
 
 CREATE_VIEW_RATINGSCORE= '''
 CREATE VIEW RatingScore AS
-    SELECT Dish.dish_id AS dish_id,COALESCE(SUM(DishRatings.rating)/COUNT(*),3) AS ave
-    FROME Dish LEFT OUTER JOIN DishRatings ON (Dish.dish_id = DishRatings.dish_id)
-    GROUP BY Dish.dish_id
+    SELECT Dish.dish_id AS dish_id,COALESCE(SUM(DishRatings.rating)/COALESCE(COUNT(*),1),3) AS ave
+    FROM Dish LEFT OUTER JOIN DishRatings ON (Dish.dish_id = DishRatings.dish_id)
+    GROUP BY Dish.dish_id;
                                 
 '''
 
 
 CREATE_VIEW_APPO= '''
 CREATE VIEW appo AS
-    SELECT dish_id , dish_price , SUM(dish_amount)/COUNT(*)*dish_price AS val 
+    SELECT dish_id , dish_price , SUM(dish_amount)/COALESCE(COUNT(*),1)*dish_price AS val 
     FROM OrderedDishes
-    GROUP BY dish_id , dish_price
+    GROUP BY dish_id , dish_price;
     
 '''
 
@@ -148,7 +146,7 @@ CREATE VIEW Agree AS
 
     FROM    DishRatings D1 JOIN DishRatings D2
                            ON   (D1.dish_id = D2.dish_id)
-    WHERE (D1.cust_id <> D2.cust_id ) AND (D1.rating >= 4) AND (D2.rating >= 4)  
+    WHERE (D1.cust_id <> D2.cust_id ) AND (D1.rating >= 4) AND (D2.rating >= 4);  
     
 '''
 
@@ -516,7 +514,7 @@ def get_all_customer_ratings(cust_id: int) -> List[Tuple[int, int]]:
 def get_order_total_price(order_id: int) -> float:
     #TODO the float to dable ?
     GET_ORDER_TOTAL_PRICE_QUERY_FORMAT = '''
-        SELECT toatal+delivery_fee
+        SELECT toatal+delivery_fee AS pay
         FROM OrdersSum
         WHERE OrdersSum.order_id = {order_id}
         LIMIT 1
@@ -525,28 +523,32 @@ def get_order_total_price(order_id: int) -> float:
         order_id = sql.Literal(order_id)
     )
     _, _, data, _ = handle_query(query)
-    return float(data[0]['total_order_price'])
+    if data is None:
+        return []
+    return float(data[0]['pay'])
 
 
 def get_customers_spent_max_avg_amount_money() -> List[int]:
     #:including dekiveryfee see in oazzza @34
     GET_CUSTOMERS_SPENT_MAX_AVG_AMOUNT_MONY_QUERY_FORMAT = '''
-        SELECT P.cust_id
+        SELECT Co.cust_id
         FROM CustomersOrders AS Co JOIN OrdersSum AS Os ON(Co.order_id = Os.order_id)
         WHERE Co.cust_id IS NOT NULL
         GROUP BY Co.cust_id
-        HAVING  SUM(Os.toatal + Os.delivery_fee)/COUNT(*) =(
-                    SELECT  sum(OrdersSum.toatal + OrdersSum.delivery_fee)/COUNT(*) max
+        HAVING  SUM(Os.toatal + Os.delivery_fee)/COALESCE(COUNT(*),1) =(
+                    SELECT  sum(OrdersSum.toatal + OrdersSum.delivery_fee)/COALESCE(COUNT(*),1) max
                     FROM CustomersOrders JOIN OrdersSum ON(CustomersOrders.order_id = OrdersSum.order_id)
                     WHERE  CustomersOrders.cust_id IS NOT NULL 
                     GROUP BY CustomersOrders.cust_id                      
-                    ORDER BY SUM(OrdersSum.toatal + OrdersSum.delivery_fee)/COUNT(*) DESC
+                    ORDER BY SUM(OrdersSum.toatal + OrdersSum.delivery_fee)/COALESCE(COUNT(*),1) DESC
                     LIMIT 1 )
         ORDER BY Co.cust_id ASC
 
     ''' 
     query = sql.SQL(GET_CUSTOMERS_SPENT_MAX_AVG_AMOUNT_MONY_QUERY_FORMAT)
     _, _, data, _ = handle_query(query)
+    if data is None:
+        return []
     return [row['cust_id'] for row in data]
 
 
@@ -568,26 +570,29 @@ def get_most_purchased_dish_among_anonymous_order() -> Dish:
     _, rows_amount, data,_ = handle_query(query)
     if rows_amount > 1:
         assert (0)
-
+    if data is None:
+        return Dish()
     return Dish(data[0]['dish_id'], data[0]['name'], data[0]['price'], data[0]['is_active'])
 
 
 def did_customer_order_top_rated_dishes(cust_id: int) -> bool:
     DID_CUSTOMER_ORDER_TOP_RATED_DISHES_QUERY_FORMAT = '''
 
-    SELECT COUNT(*)
+    SELECT DISTINCT  CustomersOrders.cust_id
     FROM CustomersOrders JOIN OrderedDishes ON(CustomersOrders.order_id = OrderedDishes.order_id)
     WHERE CustomersOrders.cust_id IS NOT NULL
                  AND CustomersOrders.cust_id = {cust_id}
-                    AND CustomersOrders.order_id IN(
+                    AND OrderedDishes.dish_id IN(
                                             SELECT dish_id 
-                                            FROME RatingScore
+                                            FROM RatingScore
                                             ORDER BY ave DESC , dish_id ASC
                                             LIMIT 5)
-    LIMIT 1                                        
+                                       
                            
     '''
-    query = sql.SQL(DID_CUSTOMER_ORDER_TOP_RATED_DISHES_QUERY_FORMAT)
+    query = sql.SQL(DID_CUSTOMER_ORDER_TOP_RATED_DISHES_QUERY_FORMAT).format(
+        cust_id=sql.Literal(cust_id)
+    )
     _, rows_amount, _, _ = handle_query(query)
     return rows_amount > 0
 
@@ -598,13 +603,13 @@ def did_customer_order_top_rated_dishes(cust_id: int) -> bool:
 def get_customers_rated_but_not_ordered() -> List[int]:
     GET_MIN_DISH = '''
         SELECT dish_id 
-        FROME RatingScore
+        FROM RatingScore
         WHERE ave < 3
         ORDER BY ave ASC , dish_id ASC
      '''
     GET_CUSTOMER_RATED_BUT_NOT_ORDER_QUERY_FORMAT = '''
     SELECT *
-    FROME(
+    FROM(
             (
                 SELECT  DishRatings.cust_id
                 FROM DishRatings
@@ -620,6 +625,8 @@ def get_customers_rated_but_not_ordered() -> List[int]:
     '''
     query = sql.SQL(GET_CUSTOMER_RATED_BUT_NOT_ORDER_QUERY_FORMAT)
     _, _, data, _ = handle_query(query)
+    if data is None:
+        return []
     return [row['cust_id'] for row in data]
 
 
@@ -630,7 +637,7 @@ def get_non_worth_price_increase() -> List[int]:
                 SELECT B.dish_id , MIN(B.dish_price) AS min  
                 FROM Appo AS B
                 GROUP BY B.dish_id
-                HAVING COUNT(*) >= 2
+                HAVING COALESCE(COUNT(*),1) >= 2
                 ) ON (A.dish_id = B.dish_id)
             JOIN Appo AS C ON(A.dish_id = C.dish_id AND  C.dish_price = min )
             JOIN Dish ON (A.dish_id = Dish.dish_id AND A.dish_price =  Dish.price  )
@@ -640,6 +647,8 @@ def get_non_worth_price_increase() -> List[int]:
 
     query = sql.SQL(GET_NON_WORTH_PRICE_INCREASE_QUERY_FORMAT)
     _, _, data, _ = handle_query(query)
+    if data is None:
+        return []
     return [row['dish_id'] for row in data]
 
 
@@ -648,7 +657,7 @@ def get_cumulative_profit_per_month(year: int) -> List[Tuple[int, float]]:
     # TODO: should we include deliveryfee? i dont think
     GET_CUMULACTIVE_PROFILE_PER_MONTH_QUERY_FORMAT = '''
     SELCT Mn.month_number AS month , COALESCE(Data.toatal ,0) AS profit
-    FROME (SELECT 1 AS month_number UNION ALL 
+    FROM (SELECT 1 AS month_number UNION ALL 
             SELECT 2 UNION ALL
             SELECT 3 UNION ALL
             SELECT 4 UNION ALL
@@ -670,15 +679,19 @@ def get_cumulative_profit_per_month(year: int) -> List[Tuple[int, float]]:
     ORDER BY Mn.month_number DESC              
                       
     '''
-    query = sql.SQL(GET_CUMULACTIVE_PROFILE_PER_MONTH_QUERY_FORMAT)
+    query = sql.SQL(GET_CUMULACTIVE_PROFILE_PER_MONTH_QUERY_FORMAT).format(
+        year=sql.Literal(year)
+    )
     _, _, data, _ = handle_query(query)
+    if data is None:
+        return []  
     return [(row['month'],float(row['profit'])) for row in data]
 
 
 def get_potential_dish_recommendations(cust_id: int) -> List[int]:
     GET_POTENTIAL_DISH_RECOMMENDATIONS_QUERY_FORMAT = '''
     SELECT dish_id
-    FROME(
+    FROM(
             (
                 WITH RECURSIVE transitiveAgree AS(
                         SELECT c1 ,c2 ,dish_id
@@ -700,12 +713,16 @@ def get_potential_dish_recommendations(cust_id: int) -> List[int]:
     ORDER BY dish_id ASC                          
 
     '''
-    query = sql.SQL(GET_POTENTIAL_DISH_RECOMMENDATIONS_QUERY_FORMAT)
+    query = sql.SQL(GET_POTENTIAL_DISH_RECOMMENDATIONS_QUERY_FORMAT).format(
+        cust_id=sql.Literal(cust_id)
+    )
     _, _, data, _ = handle_query(query)
+    if data is None:
+        return []
     return [row['dish_id'] for row in data]
 
 
-# if __name__ == '__main__':
-#      print("0. Creating all tables")
-#      create_tables()
-#     drop_tables()
+if __name__ == '__main__':
+      print("0. Creating all tables")
+      create_tables()
+      drop_tables()
