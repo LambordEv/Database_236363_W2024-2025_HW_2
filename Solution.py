@@ -8,13 +8,11 @@ from Business.Customer import Customer, BadCustomer
 from Business.Order import Order, BadOrder
 from Business.Dish import Dish, BadDish
 from Business.OrderDish import OrderDish
+from datetime import datetime
 
-
-#flags
-#DEBUG_FLAG = True
 DEBUG_FLAG = False
 
-# ----------------------------- QUERY TABLE DEFINISION: -----------------------------
+# ----------------------------- QUERY TABLE DEFINITION: -----------------------------
 
 #object tables
 CREATE_CUSTOMER_TABLE_QUERY = '''
@@ -99,7 +97,7 @@ CREATE TABLE DishRatings
 );
 '''
 
-
+# ------------------------------- Database Views Definitions -------------------------------
 CREATE_VIEW_ORDERSSUM = '''
 CREATE VIEW OrdersSum AS
 (
@@ -116,16 +114,14 @@ CREATE_VIEW_CUSTOMESRORDERS = '''
 CREATE VIEW CustomersOrders AS
 (
     SELECT  Placed.cust_id AS cust_id, 
-            Orders.order_id AS order_id,
-            Orders.date AS date,
-            Orders.delivery_fee AS delivery_fee
+            Orders.order_id AS order_id
     FROM Orders
     LEFT JOIN Placed ON Orders.order_id = Placed.order_id
 );
 '''
 
 
-CREATE_VIEW_RATINGSCORE= '''
+CREATE_VIEW_RATINGSCORE = '''
 CREATE VIEW RatingScore AS
 (
     SELECT Dish.dish_id AS dish_id, COALESCE(AVG(DishRatings.rating), 3) AS avg_rating
@@ -166,11 +162,6 @@ ALL_VIEW_NAMES = ['OrdersSum', 'CustomersOrders', 'RatingScore', 'appo', 'Custom
 
 
 # ------------------------------- Function helper: -------------------------------
-
-
-
-# ------------------------------- Function helper: -------------------------------
-
 # in case of an illegal or a failed database communication
 def handle_database_exceptions(query: sql.SQL, e: Exception, print_flag = False) -> ReturnValue:
     result = ReturnValue.ERROR
@@ -217,17 +208,12 @@ def handle_query(query: sql.SQL) -> Tuple[ReturnValue, int, Connector.ResultSet,
 
 
 def return_Value_select(qstatus:ReturnValue, rows_effected)-> ReturnValue:
-        # if qstatus == ReturnValue.BAD_PARAMS:
-        #     return ReturnValue.NOT_EXISTS
         if qstatus == ReturnValue.OK and rows_effected == 0:
             return ReturnValue.NOT_EXISTS
         return qstatus
 
-
-
 # ---------------------------------- CRUD API: ----------------------------------
 # Basic database functions
-
 
 def create_tables() -> None:
     conn = None
@@ -247,9 +233,6 @@ def create_tables() -> None:
 
     query = sql.SQL(CREATE_TABLES_QUERY_FORMAT)
     _, _, _, exp = handle_query(query)
-    if isinstance(exp, Exception):
-        i = 1
-        i += 1
 
 
 def clear_tables() -> None:
@@ -259,8 +242,9 @@ def clear_tables() -> None:
 
 
 def drop_tables() -> None:
-    DROP_TABLES_QUERY_FORMAT = '\n'.join([f"DROP TABLE IF EXISTS {table} CASCADE;" for table in All_TABLE_NAMES])
-    query = sql.SQL(DROP_TABLES_QUERY_FORMAT)
+    DROP_TABLES_AND_VIEWS_QUERY_FORMAT = '\n'.join([f"DROP VIEW IF EXISTS {table};" for table in ALL_VIEW_NAMES])
+    DROP_TABLES_AND_VIEWS_QUERY_FORMAT += '\n'.join([f"DROP TABLE IF EXISTS {table} CASCADE;" for table in All_TABLE_NAMES])
+    query = sql.SQL(DROP_TABLES_AND_VIEWS_QUERY_FORMAT)
     handle_query(query)
     
 
@@ -285,12 +269,10 @@ def add_customer(customer: Customer) -> ReturnValue:
 
 
 def get_customer(customer_id: int) -> Customer:
-    GET_CUSTOMER_QUERY_FORMAT = '''
-        SELECT * FROM Customer WHERE cust_id={cust_id}
+    GET_CUSTOMER_QUERY_FORMAT = f'''
+        SELECT * FROM Customer WHERE cust_id={customer_id}
     '''
-    query = sql.SQL(GET_CUSTOMER_QUERY_FORMAT).format(
-        cust_id = sql.Literal(customer_id)
-    )
+    query = sql.SQL(GET_CUSTOMER_QUERY_FORMAT)
     qstatus, rows_effected, rows, _ = handle_query(query)
     qstatus = return_Value_select(qstatus,rows_effected)
    
@@ -302,12 +284,10 @@ def get_customer(customer_id: int) -> Customer:
 
 
 def delete_customer(customer_id: int) -> ReturnValue:
-    DELETE_CUSTOMER_QUERY_FORMAT = '''
-        DELETE FROM Customer WHERE cust_id={cust_id}
+    DELETE_CUSTOMER_QUERY_FORMAT = f'''
+        DELETE FROM Customer WHERE cust_id={customer_id}
     '''
-    query = sql.SQL(DELETE_CUSTOMER_QUERY_FORMAT).format(
-        cust_id = sql.Literal(customer_id)
-    )
+    query = sql.SQL(DELETE_CUSTOMER_QUERY_FORMAT)
     qstatus, rows_effected, _, _ = handle_query(query)
     return return_Value_select(qstatus, rows_effected)
 
@@ -320,7 +300,7 @@ def add_order(order: Order) -> ReturnValue:
     '''
     query = sql.SQL(ADD_ORDER_QUERY_FORMAT).format(
         order_id = sql.Literal(order.get_order_id()),
-        date = sql.Literal(order.get_datetime()),
+        date = sql.Literal(order.get_datetime().strftime("%Y-%m-%d %H:%M:%S")),
         delivery_fee = sql.Literal(order.get_delivery_fee()),
         delivery_address = sql.Literal(order.get_delivery_address())
     )
@@ -329,12 +309,10 @@ def add_order(order: Order) -> ReturnValue:
 
 
 def get_order(order_id: int) -> Order:
-    GET_ORDER_QUERY_FORMAT = '''
+    GET_ORDER_QUERY_FORMAT = f'''
         SELECT * FROM Orders WHERE order_id={order_id}
     '''
-    query = sql.SQL(GET_ORDER_QUERY_FORMAT).format(
-        order_id = sql.Literal(order_id)
-    )
+    query = sql.SQL(GET_ORDER_QUERY_FORMAT)
     qstatus, rows_effected, rows, _ = handle_query(query)
     qstatus = return_Value_select(qstatus, rows_effected)
     if qstatus != ReturnValue.OK:
@@ -346,12 +324,10 @@ def get_order(order_id: int) -> Order:
 
 
 def delete_order(order_id: int) -> ReturnValue:
-    DELETE_ORDER_QUERY_FORMAT = '''
+    DELETE_ORDER_QUERY_FORMAT = f'''
     DELETE FROM Orders WHERE order_id={order_id}
     '''
-    query = sql.SQL(DELETE_ORDER_QUERY_FORMAT).format(
-        order_id = sql.Literal(order_id)
-    )
+    query = sql.SQL(DELETE_ORDER_QUERY_FORMAT)
     qstatus, rows_effected, _, _ = handle_query(query)
     return return_Value_select(qstatus, rows_effected)
 
@@ -371,13 +347,11 @@ def add_dish(dish: Dish) -> ReturnValue:
     return qstatus
 
 def get_dish(dish_id: int) -> Dish:
-    GET_DISH_QUERY_FORMAT = '''
+    GET_DISH_QUERY_FORMAT = f'''
         SELECT * FROM Dish WHERE dish_id={dish_id}
     '''
     retObject = BadDish()
-    query = sql.SQL(GET_DISH_QUERY_FORMAT).format(
-        dish_id = sql.Literal(dish_id)
-    )
+    query = sql.SQL(GET_DISH_QUERY_FORMAT)
     qstatus, rows_effected, rows, _ = handle_query(query)
     qstatus = return_Value_select(qstatus, rows_effected)
 
@@ -387,26 +361,20 @@ def get_dish(dish_id: int) -> Dish:
 
 
 def update_dish_price(dish_id: int, price: float) -> ReturnValue:
-    UPDATE_DISH_PRICE_QUERY_FORMAT = '''
+    UPDATE_DISH_PRICE_QUERY_FORMAT = f'''
         UPDATE Dish SET price = {price} WHERE (dish_id={dish_id} AND is_active=TRUE)
     '''
-    query = sql.SQL(UPDATE_DISH_PRICE_QUERY_FORMAT).format(
-        dish_id = sql.Literal(dish_id),
-        price = sql.Literal(price)
-    )
+    query = sql.SQL(UPDATE_DISH_PRICE_QUERY_FORMAT)
     qstatus, rows_effected, _, _ = handle_query(query)
     if ReturnValue.OK == qstatus and 0 == rows_effected:
         qstatus = ReturnValue.NOT_EXISTS
     return  qstatus
 
 def update_dish_active_status(dish_id: int, is_active: bool) -> ReturnValue:
-    UPDATE_DISH_PRICE_QUERY_FORMAT = '''
+    UPDATE_DISH_PRICE_QUERY_FORMAT = f'''
         UPDATE Dish SET is_active = {is_active} WHERE dish_id={dish_id}
     '''
-    query = sql.SQL(UPDATE_DISH_PRICE_QUERY_FORMAT).format(
-        dish_id = sql.Literal(dish_id),
-        is_active = sql.Literal(is_active)
-    )
+    query = sql.SQL(UPDATE_DISH_PRICE_QUERY_FORMAT)
     qstatus, rows_effected, _, _ = handle_query(query)
     if ReturnValue.OK == qstatus and 0 == rows_effected:
         qstatus = ReturnValue.NOT_EXISTS
@@ -414,25 +382,20 @@ def update_dish_active_status(dish_id: int, is_active: bool) -> ReturnValue:
 
 
 def customer_placed_order(customer_id: int, order_id: int) -> ReturnValue:
-    CUSTOMER_PLACED_ORDER_QUERY_FORMAT = '''
+    CUSTOMER_PLACED_ORDER_QUERY_FORMAT = f'''
         INSERT INTO Placed(cust_id, order_id)
-        VALUES({cust_id}, {order_id})
+        VALUES({customer_id}, {order_id})
     '''
-    query = sql.SQL(CUSTOMER_PLACED_ORDER_QUERY_FORMAT).format(
-        cust_id=sql.Literal(customer_id),
-        order_id=sql.Literal(order_id)
-    )
+    query = sql.SQL(CUSTOMER_PLACED_ORDER_QUERY_FORMAT)
     qstatus, rows_effected, _, _ = handle_query(query)
     return qstatus
 
 def get_customer_that_placed_order(order_id: int) -> Customer:
-    GET_CUSTOMER_THAT_PLACED_ORDER_QUERY = '''
+    GET_CUSTOMER_THAT_PLACED_ORDER_QUERY = f'''
         SELECT * FROM Customer WHERE cust_id = (SELECT cust_id FROM Placed WHERE order_id = {order_id})
     '''
     retObject = BadCustomer()
-    query = sql.SQL(GET_CUSTOMER_THAT_PLACED_ORDER_QUERY).format(
-        order_id = sql.Literal(order_id)
-    )
+    query = sql.SQL(GET_CUSTOMER_THAT_PLACED_ORDER_QUERY)
     qstatus, rows_effected, data, _ = handle_query(query)
     qstatus = return_Value_select(qstatus,rows_effected)
     if ReturnValue.OK == qstatus:
@@ -454,26 +417,21 @@ def order_contains_dish(order_id: int, dish_id: int, amount: int) -> ReturnValue
 
 
 def order_does_not_contain_dish(order_id: int, dish_id: int) -> ReturnValue:
-    DELETE_ORDER_QUERY_FORMAT = '''
+    DELETE_ORDER_QUERY_FORMAT = f'''
         DELETE FROM OrderedDishes WHERE (order_id={order_id} AND dish_id={dish_id})
     '''
-    query = sql.SQL(DELETE_ORDER_QUERY_FORMAT).format(
-        order_id=sql.Literal(order_id),
-        dish_id=sql.Literal(dish_id)
-    )
+    query = sql.SQL(DELETE_ORDER_QUERY_FORMAT)
     qstatus, rows_effected, _, _ = handle_query(query)
     return return_Value_select(qstatus,rows_effected)
 
 def get_all_order_items(order_id: int) -> List[OrderDish]:
-    GET_ALL_ORDERED_ITEMS_QUERY = '''
+    GET_ALL_ORDERED_ITEMS_QUERY = f'''
         SELECT * FROM OrderedDishes 
         WHERE order_id = {order_id}
         ORDER BY dish_id ASC
     '''
     retObject = []
-    query = sql.SQL(GET_ALL_ORDERED_ITEMS_QUERY).format(
-        order_id=sql.Literal(order_id)
-    )
+    query = sql.SQL(GET_ALL_ORDERED_ITEMS_QUERY)
     qstatus, rows_effected, data, _ = handle_query(query)
     qstatus = return_Value_select(qstatus,rows_effected)
     if ReturnValue.OK == qstatus:
@@ -483,39 +441,30 @@ def get_all_order_items(order_id: int) -> List[OrderDish]:
 
 
 def customer_rated_dish(cust_id: int, dish_id: int, rating: int) -> ReturnValue:
-    CUSTOMER_DISH_RATE_QUERY_FORMAT = '''
+    CUSTOMER_DISH_RATE_QUERY_FORMAT = f'''
         INSERT INTO DishRatings(cust_id, dish_id, rating)
         VALUES({cust_id}, {dish_id}, {rating} 
         )
     '''
-    query = sql.SQL(CUSTOMER_DISH_RATE_QUERY_FORMAT).format(
-        cust_id=sql.Literal(cust_id),
-        dish_id=sql.Literal(dish_id),
-        rating=sql.Literal(rating)
-    )
+    query = sql.SQL(CUSTOMER_DISH_RATE_QUERY_FORMAT)
     qstatus, rows_effected, _, _ = handle_query(query)
     return qstatus
     
 
 def customer_deleted_rating_on_dish(cust_id: int, dish_id: int) -> ReturnValue:
-    DELETE_DISH_RATING_QUERY_FORMAT = '''
+    DELETE_DISH_RATING_QUERY_FORMAT = f'''
         DELETE FROM DishRatings WHERE (cust_id={cust_id} AND dish_id={dish_id})
     '''
-    query = sql.SQL(DELETE_DISH_RATING_QUERY_FORMAT).format(
-        cust_id=sql.Literal(cust_id),
-        dish_id=sql.Literal(dish_id)
-    )
+    query = sql.SQL(DELETE_DISH_RATING_QUERY_FORMAT)
     qstatus, rows_effected, _, _ = handle_query(query)
     return return_Value_select(qstatus, rows_effected)
 
 def get_all_customer_ratings(cust_id: int) -> List[Tuple[int, int]]:
-    GET_ALL_CUSTOMER_RATINGS_QUERY_FORMAT = '''
+    GET_ALL_CUSTOMER_RATINGS_QUERY_FORMAT = f'''
         SELECT * FROM DishRatings WHERE cust_id = {cust_id} ORDER BY dish_id ASC
     '''
     retObject = []
-    query = sql.SQL(GET_ALL_CUSTOMER_RATINGS_QUERY_FORMAT).format(
-        cust_id=sql.Literal(cust_id)
-    )
+    query = sql.SQL(GET_ALL_CUSTOMER_RATINGS_QUERY_FORMAT)
     qstatus, rows_effected, data, _ = handle_query(query)
     qstatus = return_Value_select(qstatus, rows_effected)
     if ReturnValue.OK == qstatus:
@@ -527,19 +476,14 @@ def get_all_customer_ratings(cust_id: int) -> List[Tuple[int, int]]:
 
 
 def get_order_total_price(order_id: int) -> float:
-    #TODO the float to dable ?
-    GET_ORDER_TOTAL_PRICE_QUERY_FORMAT = '''
+    GET_ORDER_TOTAL_PRICE_QUERY_FORMAT = f'''
         SELECT total+delivery_fee AS pay
         FROM OrdersSum
         WHERE OrdersSum.order_id = {order_id}
         LIMIT 1
     '''
-    query = sql.SQL(GET_ORDER_TOTAL_PRICE_QUERY_FORMAT).format(
-        order_id = sql.Literal(order_id)
-    )
+    query = sql.SQL(GET_ORDER_TOTAL_PRICE_QUERY_FORMAT)
     _, _, data, _ = handle_query(query)
-    if data is None:
-        return []
     return float(data[0]['pay'])
 
 
@@ -550,7 +494,7 @@ def get_customers_spent_max_avg_amount_money() -> List[int]:
         FROM CustomersOrders AS Co JOIN OrdersSum AS Os ON(Co.order_id = Os.order_id)
         WHERE Co.cust_id IS NOT NULL
         GROUP BY Co.cust_id
-        HAVING  SUM(Os.total + Os.delivery_fee)/COALESCE(COUNT(*),1) =(
+        HAVING  SUM(Os.total + Os.delivery_fee)/COALESCE(COUNT(*),1) = (
                     SELECT  sum(OrdersSum.total + OrdersSum.delivery_fee)/COALESCE(COUNT(*),1) max
                     FROM CustomersOrders JOIN OrdersSum ON(CustomersOrders.order_id = OrdersSum.order_id)
                     WHERE  CustomersOrders.cust_id IS NOT NULL 
@@ -558,7 +502,6 @@ def get_customers_spent_max_avg_amount_money() -> List[int]:
                     ORDER BY SUM(OrdersSum.total + OrdersSum.delivery_fee)/COALESCE(COUNT(*),1) DESC
                     LIMIT 1 )
         ORDER BY Co.cust_id ASC
-
     ''' 
     query = sql.SQL(GET_CUSTOMERS_SPENT_MAX_AVG_AMOUNT_MONY_QUERY_FORMAT)
     _, _, data, _ = handle_query(query)
@@ -625,28 +568,24 @@ def testSolutionQuery():
     '''
 
 def get_customers_rated_but_not_ordered() -> List[int]:
-    GET_MIN_DISH = '''
+    GET_MIN_RATED_DISHES = '''
         SELECT dish_id
-        FROM RatingScore
-        WHERE avg_rating < 3
-        ORDER BY avg_rating ASC, dish_id ASC
-        LIMIT 5
+            FROM RatingScore
+            ORDER BY avg_rating ASC, dish_id ASC
+            LIMIT 5
     '''
     GET_CUSTOMER_RATED_BUT_NOT_ORDER_QUERY_FORMAT = f'''
-    SELECT *
-    FROM(
-            (
-                SELECT DishRatings.cust_id
-                FROM DishRatings
-                WHERE DishRatings.dish_id IN({GET_MIN_DISH}) AND DishRatings.cust_id IS NOT NULL
-                ORDER BY DishRatings.cust_id ASC
-            )EXCEPT( 
-                SELECT  CustomersOrders.cust_id
-                FROM CustomersOrders JOIN OrderedDishes ON(CustomersOrders.order_id = OrderedDishes.order_id)
-                WHERE CustomersOrders.cust_id IS NOT NULL AND  OrderedDishes.dish_id IN({GET_MIN_DISH})  
-            )
-        ) 
-    ORDER BY cust_id ASC;   
+        SELECT DISTINCT(cust_low_ratings.cust_id) AS cust_id FROM 
+        (
+            SELECT cust_id, dish_id FROM DishRatings 
+            WHERE rating < 3
+        ) cust_low_ratings
+        WHERE cust_low_ratings.dish_id IN ({GET_MIN_RATED_DISHES}) 
+        AND cust_low_ratings.dish_id NOT IN 
+        (
+            SELECT cd.dish_id FROM CustomerOrderedDishes cd 
+            WHERE cd.cust_id = cust_low_ratings.cust_id
+        ) ORDER BY cust_id ASC;
     '''
     query = sql.SQL(GET_CUSTOMER_RATED_BUT_NOT_ORDER_QUERY_FORMAT)
     _, _, data, _ = handle_query(query)
@@ -678,31 +617,30 @@ def get_non_worth_price_increase() -> List[int]:
 
 
 def get_cumulative_profit_per_month(year: int) -> List[Tuple[int, float]]:
-    # TODO: AS FLOAT ? see asaigmnt PDF ?
-    # TODO: should we include deliveryfee? i dont think
     GET_CUMULACTIVE_PROFILE_PER_MONTH_QUERY_FORMAT = '''
-    SELECT Mn.month_number AS month , COALESCE(Data.total ,0) AS profit
-    FROM (SELECT 1 AS month_number UNION ALL 
-            SELECT 2 UNION ALL
-            SELECT 3 UNION ALL
-            SELECT 4 UNION ALL
-            SELECT 5 UNION ALL
-            SELECT 6 UNION ALL
-            SELECT 7 UNION ALL
-            SELECT 8 UNION ALL
-            SELECT 9 UNION ALL
-            SELECT 10 UNION ALL
-            SELECT 11 UNION ALL
-            SELECT 12) Mn LEFT JOIN (
-                                    (SELECT EXTRACT(MONTH  FROM TIMESTAMP Orders.date)   AS  month, 
-                                            SUM(OrdersSum.total)  AS total,
-                                            SUM(OrdersSum.delivery_fee)  AS   delivery_fee
-                                    FROM Orders JOIN OrdersSum ON (Orders.order_id = OrdersSum.order_id) 
-                                    WHERE EXTRACT(YEAR FROM TIMESTAMP Orders.date) = {year}
-                                    GROUP BY  EXTRACT(MONTH  FROM TIMESTAMP Orders.date))  Data
-                            ) ON (Mn.month_number = Data.month)
-    ORDER BY Mn.month_number DESC              
-                      
+        SELECT COALESCE(SUM(total),0) AS val, coordinate.j AS month
+        FROM 
+            (SELECT *FROM (SELECT 1 AS i UNION ALL  SELECT 2 UNION ALL SELECT 3 
+                UNION ALL SELECT 4 UNION ALL SELECT 5
+                UNION ALL SELECT 6 UNION ALL SELECT 7 
+                UNION ALL SELECT 8 UNION ALL SELECT 9
+                UNION ALL SELECT 10 UNION ALL SELECT 11
+                UNION ALL SELECT 12)   ,(SELECT 1 AS j UNION ALL  SELECT 2 UNION ALL SELECT 3 
+                UNION ALL SELECT 4 UNION ALL SELECT 5
+                UNION ALL SELECT 6 UNION ALL SELECT 7 
+                UNION ALL SELECT 8 UNION ALL SELECT 9
+                UNION ALL SELECT 10 UNION ALL SELECT 11
+                UNION ALL SELECT 12)
+                WHERE i <=j
+                ) AS coordinate LEFT JOIN (
+                    (SELECT     Orders.order_id AS order_id,
+                                OrdersSum.total + OrdersSum.delivery_fee AS total,
+                                EXTRACT(MONTH  FROM  Orders.date) AS month
+                    FROM Orders JOIN OrdersSum ON (Orders.order_id = OrdersSum.order_id)
+                    WHERE EXTRACT(YEAR FROM  Orders.date) = {year} ) 
+                )ON(coordinate.i = month)
+                group by coordinate.j
+                ORDER BY  coordinate.j DESC
     '''
     query = sql.SQL(GET_CUMULACTIVE_PROFILE_PER_MONTH_QUERY_FORMAT).format(
         year=sql.Literal(year)
@@ -710,7 +648,7 @@ def get_cumulative_profit_per_month(year: int) -> List[Tuple[int, float]]:
     _, _, data, _ = handle_query(query)
     if data is None:
         return []  
-    return [(row['month'],float(row['profit'])) for row in data]
+    return [(row['month'], float(row['val'])) for row in data]
 
 
 def get_potential_dish_recommendations(cust_id: int) -> List[int]:
@@ -732,38 +670,8 @@ def get_potential_dish_recommendations(cust_id: int) -> List[int]:
         EXCEPT (SELECT dish_id FROM CustomerOrderedDishes WHERE cust_id = {cust_id})
     ) ORDER BY dish_id ASC;
     '''
-
-    # GET_POTENTIAL_DISH_RECOMMENDATIONS_QUERY_FORMAT = f'''
-    # SELECT dish_id
-    # FROM(
-    #         (
-    #             WITH RECURSIVE transitiveAgree AS (
-    #                     SELECT c1 ,c2 ,dish_id
-    #                     FROM Agree
-    #                 UNION
-    #                     SELECT transitiveAgree.c1 , Agree.c2 , Agree.dish_id
-    #                     FROM transitiveAgree JOIN Agree
-    #                                         ON(transitiveAgree.c2 = Agree.c1)
-    #                 )
-    #             SELECT transitiveAgree.dish_id AS dish_id
-    #             FROM transitiveAgree
-    #             WHERE Agree.c1 =  {cust_id}
-    #         )EXCEPT(
-    #             SELECT OrderedDishes.dish_id AS dish_id
-    #             FROM CustomersOrders JOIN OrderedDishes ON (OrderedDishes.order_id = CustomersOrders.order_id)
-    #             WHERE CustomersOrders.cust_id = {cust_id} AND CustomersOrders.cust_id  IS NOT NULL
-    #         )
-    #     )
-    # ORDER BY dish_id ASC
-    # '''
     query = sql.SQL(SELECTION_QUERY)
     _, _, data, _ = handle_query(query)
     if data is None:
         return []
     return [row['dish_id'] for row in data]
-
-
-if __name__ == '__main__':
-      print("0. Creating all tables")
-      create_tables()
-      drop_tables()
